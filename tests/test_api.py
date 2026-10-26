@@ -189,6 +189,13 @@ class ApiTest(unittest.TestCase):
         from tests.test_encoder_roundtrip import decode_packets
         self.assertTrue(decode_packets(data, 48))
 
+        # build details (paths, other stations' warnings) are hidden from station owners
+        st_owner = self.call("get", "/api/status", client=oc, csrf=ocsrf)[1]
+        self.assertEqual((st_owner["build"]["message"], st_owner["build"]["warnings"]), ("", []))
+        self.assertNotIn("output_path", st_owner)
+        builds_owner = self.call("get", "/api/builds", client=oc, csrf=ocsrf)[1]
+        self.assertEqual(builds_owner[0]["message"], "")
+
         snippet = self.call("get", "/api/mux-snippet")[1]
         self.assertIn("inputuri", snippet["blocks"]["subchannels"])
 

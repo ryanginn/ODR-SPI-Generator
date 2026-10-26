@@ -277,7 +277,7 @@ def status():
     dirty = db.get_meta("dirty_since") or ""
     snap_exists = db.q1("SELECT id FROM snapshots LIMIT 1") is not None
     out = {
-        "build": _build_public(last) if last else None,
+        "build": _redact_builds([_build_public(last)], u)[0] if last else None,
         "running": build.status()["running"],
         "dirty_since": float(dirty) if dirty else None,
         "published": snap_exists,
@@ -296,15 +296,19 @@ def _build_public(b):
     return {**b, "stats": json.loads(b["stats"]), "warnings": json.loads(b["warnings"])}
 
 
+def _redact_builds(rows, u):
+    """Station owners see build outcomes, not server paths or other stations' warnings."""
+    if is_editor(u):
+        return rows
+    return [dict(r, warnings=[], message="Build failed - contact an administrator." if r["status"] == "error"
+                 else "") for r in rows]
+
+
 @bp.get("/api/builds")
 @require()
 def builds():
     rows = db.q("SELECT * FROM builds ORDER BY id DESC LIMIT 50")
-    if not is_editor(current_user()):
-        # station owners see build outcomes, not server paths or other stations' warnings
-        rows = [dict(r, warnings=[], message="Build failed - contact an administrator." if r["status"] == "error"
-                     else "") for r in rows]
-    return jsonify([_build_public(r) for r in rows])
+    return jsonify(_redact_builds([_build_public(r) for r in rows], current_user()))
 
 
 @bp.post("/api/apply")
