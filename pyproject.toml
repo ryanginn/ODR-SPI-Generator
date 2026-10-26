@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odr-spi-generator"
+dynamic = ["version"]
+description = "DAB+ SPI (logos, service information and EPG) carousel generator with a web UI for ODR-DabMux"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.9"
+dependencies = [
+    "Flask>=2.2",
+    "cheroot>=8.6",
+    "Pillow>=9.0",
+    "defusedxml>=0.7",
+]
+
+[project.scripts]
+odr-spi-generator = "odr_spi.__main__:main"
+
+[tool.setuptools]
+packages = ["odr_spi", "odr_spi.encoder", "odr_spi.web"]
+
+[tool.setuptools.dynamic]
+version = { attr = "odr_spi.__version__" }
+
+[tool.setuptools.package-data]
+"odr_spi.web" = ["static/*"]
