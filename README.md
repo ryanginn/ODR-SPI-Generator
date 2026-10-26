@@ -1,163 +1,153 @@
-# SPI Logos Generator for ODR DAB+ multiplexes
+# ODR SPI Generator
 
-100% offline **DAB+ SPI (Service and Programme Information / Logos)** data stream generator for [OpenDigitalRadio (ODR)](https://github.com/Opendigitalradio/) DAB+ multiplexes.
-<br>
-This is a modified version of ["odr-radiodns-bridge"](https://github.com/nickpiggott/odr-radiodns-bridge) created by [Nick Piggott](https://github.com/nickpiggott/).
-<br>
-<br>
-The modification enables the generation of the SPI data stream without requiring an external web server or a RadioDNS service.
-<br>
-The aim is to simplify implementation by using a simple local directory of logos.
+A self-hosted **DAB+ SPI (Service & Programme Information)** generator for [OpenDigitalRadio](https://github.com/Opendigitalradio/) multiplexes, with a web UI.
 
-This script generates a SPI binary carousel compliant with the **ETSI TS 102 371** and **ETSI TS 102 818** specifications.
-<br>
-Decoding has been tested with success using the [AbracaDABra](https://github.com/KejPi/AbracaDABra) software, and should theoretically work with DAB+ car tuners, although this has not been tested.
+It runs as a **systemd service**, builds the SPI carousel (station logos, names, descriptions, genres and **EPG**) as the packet-mode `.dat` file that ODR-DabMux reads, and keeps it up to date on its own.
 
----
+![Stations dashboard](docs/screenshots/stations.png)
 
-## Main functions
+- **Web UI**: manage stations, logos, EPG, the ensemble, users and settings from a browser.
+- **Multi-user, with per-station access.** Station owners can update their own logos, descriptions and schedules without touching anyone else's.
+- **Logos by upload or URL.** URL logos are re-fetched every night at midnight (configurable) and on every *Apply*. If a URL can't be reached, the last good image is kept.
+- **EPG**: a weekly schedule editor plus optional XMLTV / SPI-XML feed import, broadcast as binary Programme Information for up to 14 days ahead.
+- **Imports**: legacy SPI/XSI `serviceInformation` XML (logos included, with mis-encoded text like `RaidiÃ³` repaired automatically) and your existing `odr-dabmux` config.
+- **Mux config helper**: the generator gives you ready-made `services` / `subchannels` / `components` entries for odr-dabmux.
+- **No fragile dependencies.** The encoder (MOT directory mode, MSC datagroups, packet mode, ETSI TS 102 371 binary SI/PI) is pure Python. You no longer need the git-installed `python-dabmot`, `python-dabmsc`, `hybridspi` or `odr-radiodns-bridge` packages.
 
-* **100% Offline:** No DNS resolution or online downloads via RadioDNS. This allows for simpler, local generation of the SPI stream.
-* **Automatic data extraction from an ODR-DabMux configuration file:**
-  * Automatic detection of all stations in the odr-dabmux configuration file and automatic logo assignment. 
-  * Automatic retrieval of long and short labels from the multiplex configuration. 
-  * Seamless support for stations with **different ECCs**.
-* **Station & Ensemble logo support:** Support for station logos as well as the multiplex's own logo.
+Compliant with **ETSI TS 102 371** and **ETSI TS 102 818**. The service-information encoding is byte-identical to the original script, which was tested with [AbracaDABra](https://github.com/KejPi/AbracaDABra).
 
 ---
 
-## Installation instructions
+## Install
 
-## 📦 1. System Prerequisites and Dependencies
+Tested target: **Debian 12 / Ubuntu 22.04+ / Raspberry Pi OS (bookworm)** with systemd and Python ≥ 3.9.
 
-Tested and validated on **Debian 12 (Bookworm)**.
-
-### Essential system packages
 ```bash
-sudo apt update
-sudo apt install -y git build-essential python3-dev python3-pip dos2unix
+git clone https://github.com/ryanginn/ODR-SPI-Generator.git
+cd ODR-SPI-Generator
+sudo ./install.sh
 ```
 
-### Standard Python libraries
+The installer asks for:
+
+| Question | Default | Notes |
+| :-- | :-- | :-- |
+| Web UI port | `8090` | |
+| Listen address | `0.0.0.0` | Use `127.0.0.1` if you put it behind a reverse proxy |
+| Run as user | `odr` if it exists, else a new `odr-spi` system user | This user must be able to **write the folder you pick for the SPI output** and should be able to read the logo folders you import from |
+
+Non-interactive: `sudo ./install.sh --yes --port 8090 --bind 0.0.0.0 --user odr`.
+
+When it finishes it prints the address to open, including a one-time **setup token**:
+
+```
+Installation complete.
+
+  Open the web UI:
+    http://192.168.1.20:8090/?token=Xr0…
+
+  First-run setup token: Xr0…
+```
+
+### First-run setup
+
+1. **Create the administrator.** The token is pre-filled from the link. You can show it again with `sudo odr-spi-generator setup-token`.
+2. **Ensemble**: ECC, EId and labels. You can read them straight from your odr-dabmux config with the server file browser.
+3. **Output & carousel**: pick where the `.dat` file is written (the file browser shows the server's folders and whether the service can write there), the SPI subchannel bitrate and the packet address.
+4. **Mux config**: copy the example entries into your odr-dabmux config.
+5. **Add stations**: import a legacy SPI XML, import your mux services, or add stations by hand. Then click **Apply**.
+
+### Upgrade / uninstall
+
 ```bash
-sudo pip3 install isodate bitarray crcmod pyradiodns dnspython
-```
-
-### OpenDigitalRadio-specific libraries
-```bash
-# ODR Official Python 3 MOT and MSC Modules
-sudo pip3 install git+https://github.com/Opendigitalradio/python-dabmot.git 
-sudo pip3 install git+https://github.com/Opendigitalradio/python-dabmsc.git
-
-# RadioDNS > ODR Gateway and EPG Structure
-sudo pip3 install git+https://github.com/nickpiggott/odr-radiodns-bridge.git
-sudo pip3 install git+https://github.com/GlobalRadio/python-mot-epg.git
-
-# Basic SPI library
-git clone https://github.com/magicbadger/python-hybridspi.git ~/python-hybridspi
-sudo cp -r ~/python-hybridspi/src/spi $(python3 -c "import site; print(site.getsitepackages()[0])")/
-sudo chmod -R a+rX $(python3 -c "import site; print(site.getsitepackages()[0])")/spi
-```
-> The '--break-system-packages' argument might be needed in some cases, at the end of the 'sudo pip3' commands.
-
----
-
-## 🖼️ 2. Add the logos to a local directory
-
-Place your images in the configured folder (Example: /home/odr/ODR-mmbTools/config/mot/SPI/) or in any other folder of your choice, specified beforehand in the script's configuration section.
-
-### Accepted formats
-• PNG: Recommended for transparent logos.
-<br>
-• JPEG/JPG: Better to ensure full compatibility with all car tuners, since some might have difficulties to decode PNG logos.
-
-### Dimensions and naming
-
-The script automatically searches for logos based on the SIDs (for stations) and the EID (for the ensemble).
-<br>
-Your logo files must follow a specific naming convention to be correctly identified and assigned:
-
-| Type | Dimensions | Filenames examples | Use |
-| :--- | :---: | :--- | :--- |
-| **Radio Service (Miniature)** | 32 x 32 | `f9f5-32x32.png` | Small logo in the stations list |
-| **Radio Service (Rectangle)** | 112 x 32 | `f9f5-112x32.png` | Display bar on certain car tuners |
-| **Radio Service (Square)** | 128 x 128 | `f9f5-128x128.png` | High-resolution square logo on compatible receivers |
-| **Radio Service (Wide screen)** | 320 x 240 | `f9f5-320x240.png` | Wide logo displayed before SLS decoding |
-| **Multiplex Logo (Miniature)** | 32 x 32 | `f01d-32x32.png` | Small multiplex logo displayed next to its name |
-| **Multiplex Logo (Wide screen)** | 320 x 240 | `f01d-320x240.png` | Wide logo for the multiplex |
-
-In the examples above, the radio station SID is F9F5 and is present on a multiplex with F01D EID.
-<br>
-'.png' can also be replaced by '.jpeg' depending on the logo format. Note that the IDs can be specified in uppercase.
-<br>
-<br>
-32 x 32 and 320 x 240 are the most common dimensions. 112 x 32 is used less frequently.
-<br>
-You can perfectly well use a single set of dimensions (e.g. 32 x 32 only).
-
----
-
-## ⚙️ 3. Script configuration
-
-Open ODR-SPI-Generator.py in a text editor and adjust the header variables to match your actual paths.
-```python
-# ============================================================================ START OF THE USER CONFIGURATION SECTION ============================================================================
-
-CONF_MUX_FILE = "/home/odr/ODR-mmbTools/config/odr-dabmux.info"         # Path to your odr-dabmux file
-CONF_LOGOS_DIR = "/home/odr/ODR-mmbTools/config/mot/SPI"                # Path to the folder containing your logos
-CONF_OUTPUT_FILE = "/home/odr/ODR-mmbTools/config/mot/spi-output.dat"   # Path to which the output stream (spi-output.dat) is to be generated
-CONF_PACKET_SIZE = 48                                                   # Multiple of 3 of the bitrate used for the SPI service in the odr-dabmux config (e.g. 48 for 16 Kbps).
-CONF_PACKET_ADDRESS = 1                                                 # SPI packet address (It is recommended to leave it on 1 > 0x1 on the odr-dabmux config file)
-CONF_DATAGROUP = False                                                  # Works perfectly with "False" based on tests, only change this value if you really want to.
-
-# ===================================== END OF THE USER CONFIGURATION SECTION - DO NOT MODIFY VALUES BELOW THIS POINT (unless you know what you are doing) ========================================
+git pull && sudo ./install.sh        # upgrades code, keeps config + data
+sudo ./uninstall.sh                  # removes the service, keeps /etc and /var/lib data
+sudo ./uninstall.sh --purge          # removes everything (not your .dat file)
 ```
 
 ---
 
-## ⚙️ 4. ODR-DabMux file configuration
+## Using it
 
-The easiest way to configure your ODR-DabMux file, including your SPI service, is to use my generator at the following address:
-<br>
-[https://lucasgallone.github.io/ODR-DabMux-Generator/](https://lucasgallone.github.io/ODR-DabMux-Generator/)
-<br>
-<br>
-Unsure about the values to indicate? Consult the notes in the manual configuration instructions below and apply them in the generator.
+### Apply
 
-If you prefer to configure your setup manually, add the following blocks to your ODR-DabMux configuration file:
-<br>
-### At the end of the `services` section:
+Edits are saved immediately but **published only when someone clicks *Apply***. The top bar shows when there are unpublished changes. *Apply* fetches every logo URL and EPG feed, snapshots the current state, builds the carousel and writes the output file.
+
+The scheduled refresh (default: daily at 00:00, or every N hours) re-fetches URLs and feeds and rebuilds from the **last applied** state, so half-finished edits are never published by the timer. The scheduled rebuild also rolls the EPG window forward each day.
+
+### Logos
+
+Each station (and the ensemble) has one slot per size:
+
+| Size | Use |
+| :-- | :-- |
+| 32 × 32 | Station list icon, shown by almost every receiver (the most important size) |
+| 112 × 32 | Rectangle for car / hi-fi displays |
+| 128 × 128 | Higher-resolution square |
+| 320 × 240 | Widescreen, shown before slideshow loads |
+| 600 × 600 | Large square for smart radios and apps |
+
+For each slot you can **upload** a PNG/JPEG or **link a URL**. Images must be the exact size; if one isn't, the UI offers to scale it to fit (letterboxed). Every image is decoded and re-encoded before use, which strips metadata and anything that isn't image data. Imported legacy files with other sizes keep their own slots.
+
+URL logos are fetched straight away, on every *Apply*, and on the refresh schedule. A failed fetch keeps the previous image and shows the error on the slot and in the Activity log.
+
+### EPG
+
+Per station, under **EPG**:
+
+- **Programmes**: recurring weekly shows (pick days, optional start/end dates) and one-off programmes, each with title, description and genres.
+- **Feed (optional)**: an **XMLTV** URL (with channel id) or an **SPI / RadioDNS PI XML** URL. Hand-entered programmes take priority and feed programmes fill the gaps.
+- **Preview**: the next days as receivers will get them.
+
+*Settings → EPG* sets how many days to broadcast (default 7, 0 disables) and the timezone. Each extra day adds data, and the Activity page shows the full carousel cycle time at your bitrate.
+
+### Importing legacy SPI / XSI XML
+
+*Import → Legacy SPI / XSI XML* reads `serviceInformation` documents (SPI 3.x `<services>` as well as older `<ensemble>` layouts):
+
+- names, short descriptions, genres (invalid ones such as `ContentCS:2002:10` are reported and skipped), website links
+- all `dab:` bearers, including secondary components (e.g. `dab:2e3.2ea1.2491.1`)
+- the ensemble id from `<services id="e32ea1">`
+- **logos**: logos with `http(s)` URLs become URL logos. For local file names like `radio1_32x32.png`, point the import at the folder that holds them, either by **uploading the folder from your computer** or by **choosing a folder on the server** (admins). Matching files are copied into the generator's storage.
+- text mangled by a wrong encoding (`RaidiÃ³ RÃ­ RÃ¡`) is repaired (`Raidió Rí Rá`) and listed for review.
+
+Merge mode updates stations that share the same primary SId and adds the rest. You can also add everything as new, or replace all stations.
+
+### Users and roles
+
+| Role | Can do |
+| :-- | :-- |
+| **Administrator** | Everything: users, settings, server file browser, audit log |
+| **Editor** | All stations, the ensemble, imports, mux config; can Apply |
+| **Station owner** | Only their assigned stations: logos, descriptions, website, genres, EPG. Names, SIds and bearers stay with the operator. Can Apply only if the admin allows it |
+
+New users get a temporary password and must change it at first login. Every login and change is recorded in the **audit log**.
+
+### ODR-DabMux configuration
+
+*Mux config* produces the three blocks for your odr-dabmux file, using your bitrate, packet address and output path, for example:
+
 ```text
-srv-spi {
-        id 0xe1f01df1
-        label "SPI Logos"
-        shortlabel "SPILogos"
+services {
+    srv-spi {
+        id 0xe32ea1f1
+        label "SPI"
+        shortlabel "SPI"
     }
-```
-The 'id' value in this example contains the E1 ECC (`0xe1`), the EID (`f01d`) and two more random hex characters (`f1`)
-<br>
-In all cases, your SPI service ID must contain 10 hex characters under the following format: `0x'ECC'` + `EID` + `2 additional characters`.
-<br>
-### At the end of the `subchannels` section:
-```text
-sub-spi {
+}
+subchannels {
+    sub-spi {
         type packet
         bitrate 16
-        id 18
-        protection-profile EEP_B
-        protection 4
+        id 20
+        protection-profile EEP_A
+        protection 3
         inputproto file
         inputuri "/home/odr/ODR-mmbTools/config/mot/spi-output.dat"
     }
-```
-• `bitrate` can be adjusted to your desired bitrate: 8, 16, 24, or 32 Kbps.
-<br>
-• `id` must be modified according to the number of services present on the multiplex. If the last audio service on your multiplex has `id 14`, then you should specify `id 15` for the SPI.
-<br>
-• `protection-profile` and `protection` must be modified as you see fit, depending on the type of error protection you wish to use.
-### At the end of the `components` section:
-```text
-comp-spi {
+}
+components {
+    comp-spi {
         type 60
         service srv-spi
         subchannel sub-spi
@@ -167,65 +157,74 @@ comp-spi {
         address 0x1
         datagroup true
     }
+}
 ```
-The `address` value must fit the `CONF_PACKET_ADDRESS` value in the script.
-<br>
-Example: `address 0x1` in the ODR-DabMux file for `CONF_PACKET_ADDRESS = 1` in the script configuration.
+
+- The SPI service id is 32-bit: `ECC + EId + 2 hex digits`.
+- `bitrate` must match *Settings → Carousel* (8/16/24/32 kbps → 24/48/72/96-byte packets).
+- **EEP_B** protection requires a bitrate that is a multiple of 32 kbps, so use **EEP_A** for 8–24 kbps. The page warns you about this.
+
+By default the output file is **rewritten in place**, because ODR-DabMux keeps the file open and rewinds it at the end. *Settings → Output* can switch to atomic replace if your setup reopens the file.
 
 ---
 
-## 🚀 5. Using and starting the SPI Generator
+## HTTPS
 
-The generator only needs to be run once to generate your SPI data stream after placing the logos in your local directory.
-<br>
-Subsequently, it must be run again whenever logos are added, modified, or deleted.
-<br>
-<br>
-It does not need to be run every time the multiplex starts up if no changes have been made to the logos.
+The UI uses plain HTTP unless you configure TLS. On anything but a trusted LAN, use one of these:
 
-## Manual launch
-In a terminal, enter the following command:
+- **Built-in TLS.** Set `tls_cert` and `tls_key` (PEM paths readable by the service user) in `/etc/odr-spi-generator/config.json`, then `sudo systemctl restart odr-spi-generator`.
+- **Reverse proxy** (recommended). Install with `--bind 127.0.0.1`, set `"behind_proxy": true` in the config, and proxy to it. nginx example:
+
+  ```nginx
+  location / {
+      proxy_pass http://127.0.0.1:8090;
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $remote_addr;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $host;
+      client_max_body_size 40m;
+  }
+  ```
+
+## Command line
+
+```
+sudo odr-spi-generator setup-token          # show the first-run setup token
+sudo odr-spi-generator reset-password NAME  # temporary password for a user (also unlocks/enables)
+sudo odr-spi-generator build                # refresh URLs and rebuild from the last applied state
+systemctl status odr-spi-generator
+journalctl -u odr-spi-generator -f
+```
+
+## Files
+
+| Path | Contents |
+| :-- | :-- |
+| `/opt/odr-spi-generator` | Application and its Python virtualenv |
+| `/etc/odr-spi-generator/config.json` | Port, listen address, TLS, data directory |
+| `/var/lib/odr-spi-generator` | SQLite database, stored logos, EPG feed cache |
+| *(your choice)* | The SPI output `.dat` file |
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security model and the audit that was done on this release.
+
+## Development
+
 ```bash
-python3 ODR-SPI-Generator.py
+python3 -m venv .venv && .venv/bin/pip install -e .
+ODR_SPI_DATA_DIR=./data ODR_SPI_PORT=8090 .venv/bin/odr-spi-generator serve
+.venv/bin/python -m unittest discover -s tests -t .
 ```
-The generator will analyze your multiplex configuration and the logos in the specified directory, associate them with each radio service, and create the SPI data stream in the binary .dat format, which you can then use on your multiplex.
 
-## Automated startup with Supervisor
+`tests/test_encoder_compat.py` can also check the encoder byte-for-byte against the original python-dabmot / python-dabmsc stack when those libraries are on `PYTHONPATH`.
 
-You can also use Supervisor to automatize the process startup, which is the recommended option.
-<br>
-<br>
-• Open or create your service file:
-> If the path doesn't match, indicate yours instead.
-```bash
-sudo nano /etc/supervisor/conf.d/dab-spi.conf
-```
-• Add the following content to the file:
-> The command must contain the path where the ODR-SPI-Generator.py file is located. If it doesn't match, indicate yours instead.
-
-> 'user' value might vary depending on your machine configuration. If 'odr' is not the value you use, edit it.
-```ini
-[program:ODR-SPI-Generator]
-command=/usr/bin/python3 /home/odr/ODR-SPI-Generator.py
-user=odr
-autostart=true
-autorestart=false
-startsecs=0
-stdout_logfile=/var/log/supervisor/ODR-SPI-Generator.log
-stderr_logfile=/var/log/supervisor/ODR-SPI-Generator.err.log
-```
-• Apply the changes:
-```bash
-sudo supervisorctl reread
-sudo supervisorctl update
-```
+The original single-file script is kept in [`legacy/ODR-SPI-Generator.py`](legacy/ODR-SPI-Generator.py) for reference.
 
 ---
 
-### 📄 License
-This script is distributed under the GNU General Public License v3.0 (GPLv3). [Click here for more details.](https://github.com/LucasGallone/ODR-SPI-Generator/blob/main/LICENSE)
-<br>
-<br>
-It was developed based on ["odr-radiodns-bridge"](https://github.com/nickpiggott/odr-radiodns-bridge), created by Nick Piggott and distributed under the LGPL 2.1 license.
-<br>
-As well as the original work by [OpenDigitalRadio](https://github.com/Opendigitalradio/), and adapted for 100% autonomous, offline operation.
+### License
+
+GNU General Public License v3.0 (GPLv3). See [LICENSE](LICENSE).
+
+Originally created by Lucas Gallone as an offline modification of ["odr-radiodns-bridge"](https://github.com/nickpiggott/odr-radiodns-bridge) by Nick Piggott (LGPL 2.1), building on the work of [OpenDigitalRadio](https://github.com/Opendigitalradio/).

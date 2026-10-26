@@ -1,0 +1,46 @@
+[Unit]
+Description=ODR SPI Generator - DAB+ SPI/EPG carousel with web UI
+Documentation=https://github.com/ryanginn/ODR-SPI-Generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+Environment=ODR_SPI_CONFIG=/etc/odr-spi-generator/config.json
+ExecStart=/opt/odr-spi-generator/venv/bin/odr-spi-generator serve
+Restart=on-failure
+RestartSec=5
+UMask=0027
+StateDirectory=odr-spi-generator
+StateDirectoryMode=0750
+
+# Hardening. The output file location is chosen in the web UI, so the
+# filesystem stays writable subject to normal Unix permissions of @USER@;
+# system directories are read-only.
+NoNewPrivileges=yes
+CapabilityBoundingSet=@CAPS@
+AmbientCapabilities=@CAPS@
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+
+[Install]
+WantedBy=multi-user.target
