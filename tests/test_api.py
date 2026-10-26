@@ -242,6 +242,47 @@ class ApiTest(unittest.TestCase):
         st, body = self.call("get", "/api/update", client=ec, csrf=ecsrf)
         self.assertEqual((st, body["error"]), (403, "Administrator access required."))
 
+    def test_bitrates_and_mux_name(self):
+        self.assertEqual({k: build.packet_size_for(k) for k in (8, 16, 24, 32, 48, 64, 96)},
+                         {8: 24, 16: 48, 24: 72, 32: 96, 48: 72, 64: 96, 96: 96})
+        self.login_admin()
+        self.assertEqual(self.call("put", "/api/settings", {"bitrate": 64})[0], 200)
+        self.assertEqual(self.call("put", "/api/settings", {"bitrate": 100})[0], 400)
+        self.assertEqual(self.call("put", "/api/settings", {"bitrate": 60})[0], 400)
+        self.call("put", "/api/ensemble", {"ecc": "e1", "eid": "c0de", "short_name": "Demo", "medium_name": "Demo Mux"})
+        anon = self.app.test_client()
+        self.assertEqual(self.call("get", "/api/state", client=anon, csrf="")[1]["mux_name"], "Demo Mux")
+        self.call("put", "/api/settings", {"mux_name": "Region North"})
+        self.assertEqual(self.call("get", "/api/state", client=anon, csrf="")[1]["mux_name"], "Region North")
+
+    def test_warning_dismissal(self):
+        self.login_admin()
+        out = os.path.join(self.dir, "spi.dat")
+        self.call("put", "/api/settings", {"output_path": out})
+        self.call("put", "/api/ensemble", {"ecc": "e1", "eid": "c0de", "short_name": "Demo", "medium_name": "Demo Mux"})
+        self.call("post", "/api/services", {"medium_name": "No SId", "short_name": "NoSId"})
+        bid = build.run("test", None, apply_changes=True, refresh=False)
+        st = self.call("get", "/api/status")[1]["build"]
+        self.assertEqual(st["status"], "warning")
+        self.assertEqual(len(st["warnings"]), 1)
+        self.assertEqual(self.call("post", f"/api/builds/{bid}/dismiss", {"warning": st["warnings"][0]})[0], 200)
+        st = self.call("get", "/api/status")[1]["build"]
+        self.assertEqual((st["status"], st["warnings"]), ("ok", []))
+        build.run("test", None, refresh=False)  # the same warning stays hidden on later builds
+        st = self.call("get", "/api/status")[1]["build"]
+        self.assertEqual((st["status"], st["stats"]["dismissed_warnings"]), ("ok", 1))
+        self.call("post", "/api/warnings/restore", {})
+        build.run("test", None, refresh=False)
+        self.assertEqual(self.call("get", "/api/status")[1]["build"]["status"], "warning")
+
+    def test_slow_cycle_dismissal_returns_when_much_slower(self):
+        w = build.warning_key("Carousel takes 8 min 19 s to cycle at 32 kbps - consider ...")
+        self.assertEqual(w, build.SLOW_CYCLE)
+        db.set_setting("dismissed_warnings", {build.SLOW_CYCLE: 499})
+        text = ["Carousel takes 9 min 0 s to cycle at 32 kbps"]
+        self.assertEqual(build.split_dismissed(text, {"cycle_seconds": 540}), ([], text))
+        self.assertEqual(build.split_dismissed(text, {"cycle_seconds": 700}), (text, []))
+
     def test_login_lockout(self):
         self.login_admin()
         c2 = self.app.test_client()

@@ -44,6 +44,10 @@ const ICONS = {
   menu: [["path", "M3 12h18M3 6h18M3 18h18"]],
   clock: [["circle", 12, 12, 10], ["path", "M12 6v6l4 2"]],
   radio: [["path", "M4.9 19.1C1 15.2 1 8.8 4.9 4.9M19.1 4.9C23 8.8 23 15.1 19.1 19"], ["circle", 12, 12, 2]],
+  sun: [["circle", 12, 12, 4], ["path", "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"]],
+  moon: [["path", "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"]],
+  monitor: [["rect", 2, 3, 20, 14, 2], ["path", "M8 21h8M12 17v4"]],
+  heart: [["path", "M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"]],
   wifiOff: [["path", "M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"]],
 };
 
@@ -316,7 +320,37 @@ function toggle(label, checked, attrs = {}) {
 
 /* ============================== app state ============================== */
 
-const S = { user: null, csrf: null, status: null, version: "", collapsed: false, lastBuildId: null, pollTimer: null };
+const S = { user: null, csrf: null, status: null, version: "", muxName: "", collapsed: false, lastBuildId: null, pollTimer: null };
+
+/* ---------- theme (per browser) ---------- */
+const THEMES = [["system", "System", "monitor"], ["light", "Light", "sun"], ["dark", "Dark", "moon"]];
+function getTheme() {
+  try { const t = localStorage.getItem("odrspi.theme"); return t === "light" || t === "dark" ? t : "system"; } catch (e) { return "system"; }
+}
+function setTheme(t) {
+  try { if (t === "system") localStorage.removeItem("odrspi.theme"); else localStorage.setItem("odrspi.theme", t); } catch (e) { /* ignore */ }
+  if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+}
+function themeToggle() {
+  const b = h("button", { class: "icon-btn", type: "button" });
+  const draw = () => {
+    const [, label, ic] = THEMES.find((x) => x[0] === getTheme());
+    clear(b).appendChild(icon(ic));
+    b.title = `Theme: ${label} (click to change)`;
+    b.setAttribute("aria-label", b.title);
+  };
+  b.addEventListener("click", () => {
+    const i = THEMES.findIndex((x) => x[0] === getTheme());
+    setTheme(THEMES[(i + 1) % THEMES.length][0]);
+    draw();
+  });
+  draw();
+  return b;
+}
+
+function setTitle() {
+  document.title = S.muxName ? `${S.muxName} · ODR SPI Generator` : "ODR SPI Generator";
+}
 try { S.collapsed = localStorage.getItem("odrspi.collapsed") === "1"; } catch (e) { /* ignore */ }
 
 const ROLE_LABEL = { admin: "Administrator", editor: "Editor", station: "Station owner" };
@@ -360,7 +394,8 @@ async function boot() {
   let st;
   try { st = await api("GET", "/api/state", undefined, { quiet: true }); }
   catch (e) { return renderFatal(); }
-  S.version = st.version; S.user = st.user; S.csrf = st.csrf;
+  S.version = st.version; S.user = st.user; S.csrf = st.csrf; S.muxName = st.mux_name || "";
+  setTitle();
   if (st.setup_required) return renderSetupAccount();
   if (!S.user) return renderLogin();
   if (S.user.must_change_pw) return renderForcedPassword();
@@ -375,7 +410,10 @@ function renderFatal() {
 }
 
 function brand() {
-  return h("div", { class: "brand" }, h("div", { class: "brand-mark" }, icon("brand")), h("div", { class: "brand-name" }, "ODR ", h("span", null, "/ SPI")));
+  return h("div", { class: "brand" },
+    h("img", { class: "brand-logo logo-dark", src: "/static/logo-dark.svg", alt: "SPI WebFrontend" }),
+    h("img", { class: "brand-logo logo-light", src: "/static/logo-light.svg", alt: "SPI WebFrontend" }),
+    S.muxName ? h("div", { class: "mux-name", title: "Multiplex" }, icon("radio"), h("span", { class: "ellipsis" }, S.muxName)) : null);
 }
 
 function authCard(children, wide = false) {
@@ -488,7 +526,7 @@ async function renderWizard(step) {
   } else if (step === 1) {
     const s = await api("GET", "/api/settings");
     const path = inp(s.output_path, { class: "mono", placeholder: "/home/odr/ODR-mmbTools/config/mot/spi-output.dat" });
-    const bitrate = sel(s.bitrate, [[8, "8 kbps"], [16, "16 kbps"], [24, "24 kbps"], [32, "32 kbps"]]);
+    const bitrate = bitrateSelect(s.bitrate);
     const addr = h("input", { type: "number", min: 1, max: 1023, value: s.packet_address });
     const form = h("form", { class: "stack" }, steps, h("h1", null, "Output & carousel"),
       h("p", { class: "muted" }, "Where the SPI stream file is written. odr-dabmux reads this file (inputuri) - the service user needs write access to the folder."),
@@ -568,7 +606,7 @@ function renderShell() {
       h("div", { class: "user-card" },
         h("a", { class: "avatar", href: "#/account", title: "Account" }, initials(S.user.display_name || S.user.username)),
         h("div", { class: "who" }, h("b", { class: "ellipsis" }, S.user.display_name || S.user.username), h("span", null, ROLE_LABEL[S.user.role])),
-        iconBtn("user", "Account", () => { location.hash = "#/account"; }), iconBtn("logout", "Sign out", logout)),
+        themeToggle(), iconBtn("logout", "Sign out", logout)),
       h("button", { class: "collapse-btn", onclick: () => {
         S.collapsed = !S.collapsed; shell.classList.toggle("collapsed", S.collapsed);
         try { localStorage.setItem("odrspi.collapsed", S.collapsed ? "1" : "0"); } catch (e) { /* ignore */ }
@@ -1115,8 +1153,16 @@ async function pageActivity(root) {
           h("div", { class: "stat" }, h("span", null, "Logo objects"), h("b", null, s.logos)),
           h("div", { class: "stat" }, h("span", null, "EPG objects"), h("b", null, s.epg_objects)),
           h("div", { class: "stat" }, h("span", null, "Stream size"), h("b", null, fmtBytes(s.stream_bytes))),
-          h("div", { class: "stat" }, h("span", null, `Cycle time @ ${s.bitrate} kbps`), h("b", null, fmtDur(s.cycle_seconds)))) : null,
-        last.warnings && last.warnings.length ? h("div", { class: "banner amber" }, icon("alert"), h("div", null, h("b", null, `${last.warnings.length} warning(s)`), h("ul", null, last.warnings.map((w) => h("li", null, w))))) : null,
+          h("div", { class: "stat" }, h("span", null, `Cycle time @ ${s.bitrate} kbps`), h("b", null, fmtMinSec(s.cycle_seconds)))) : null,
+        last.warnings && last.warnings.length ? h("div", { class: "banner amber" }, icon("alert"), h("div", { class: "grow" },
+          h("div", { class: "row" }, h("b", null, `${last.warnings.length} warning(s)`), h("span", { class: "spacer" }),
+            isEditor() && last.warnings.length > 1 ? btn("Dismiss all", { cls: "sm", onclick: () => dismissWarning(last.id, null) }) : null),
+          h("ul", { class: "warn-list" }, last.warnings.map((w) => h("li", null, h("span", null, w),
+            isEditor() ? btn("Dismiss", { cls: "sm", title: "Hide this warning on future builds too", onclick: () => dismissWarning(last.id, w) }) : null))))) : null,
+        s.dismissed_warnings && isEditor() ? h("div", { class: "small muted row" }, `${s.dismissed_warnings} dismissed warning(s) hidden.`,
+          btn("Show them again", { cls: "sm ghost", onclick: async () => {
+            try { await api("POST", "/api/warnings/restore", {}); toast("Dismissed warnings will show again from the next build.", "ok"); } catch (e) { /* toasted */ }
+          } })) : null,
         h("div", { class: "small muted" }, "Next scheduled refresh: ", st.next_refresh ? `${fmtDate(st.next_refresh)} (${fmtIn(st.next_refresh)})` : "—"))));
     put(root, h("div", { class: "section-gap" }));
   }
@@ -1334,7 +1380,8 @@ async function pageSettings(root) {
   const s = await api("GET", "/api/settings");
   const path = inp(s.output_path, { class: "mono" });
   const writeMode = sel(s.write_mode, [["inplace", "Overwrite in place (recommended - odr-dabmux keeps the file open)"], ["atomic", "Atomic replace (write temp file + rename)"]]);
-  const bitrate = sel(s.bitrate, [[8, "8 kbps · 24-byte packets"], [16, "16 kbps · 48-byte packets"], [24, "24 kbps · 72-byte packets"], [32, "32 kbps · 96-byte packets"]]);
+  const bitrate = bitrateSelect(s.bitrate);
+  const muxName = inp(s.mux_name, { maxlength: 64, placeholder: "Defaults to the ensemble label" });
   const addr = h("input", { type: "number", min: 1, max: 1023, value: s.packet_address });
   const dg = toggle("Raw datagroup output (advanced - normally off)", s.datagroup_mode);
   const rmode = sel(s.refresh_mode, [["daily", "Once a day at a set time"], ["interval", "Every N hours"]]);
@@ -1350,29 +1397,79 @@ async function pageSettings(root) {
   rmode.addEventListener("change", sync); sync();
   const save = async () => {
     try {
-      await api("PUT", "/api/settings", { output_path: path.value, write_mode: writeMode.value, bitrate: +bitrate.value, packet_address: +addr.value,
+      await api("PUT", "/api/settings", { mux_name: muxName.value, output_path: path.value, write_mode: writeMode.value, bitrate: +bitrate.value, packet_address: +addr.value,
         datagroup_mode: dg.box.checked, refresh_mode: rmode.value, refresh_time: rtime.value, refresh_interval_hours: +rint.value, epg_days: +days.value,
         timezone: tz.value.trim(), allow_private_urls: priv.box.checked, session_hours: +sess.value });
       toast("Settings saved.", "ok"); refreshStatus();
+      const st = await api("GET", "/api/state");
+      if (st.mux_name !== S.muxName) { S.muxName = st.mux_name; setTitle(); renderShell(); }
     } catch (e) { /* toasted */ }
   };
   const card = (title, sub, ...body) => h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, title), h("p", null, sub))), h("div", { class: "card-body stack" }, body));
   put(root, h("div", { class: "page-head" }, h("div", null, h("h1", null, "Settings")), h("span", { class: "spacer" }), btn("Save settings", { cls: "primary", icon: "check", onclick: save })),
     h("div", { class: "stack" },
+      card("General", "Shown on the login screen, in the browser tab and under the logo, so you can see at a glance which multiplex you're editing.",
+        field("Multiplex name", muxName)),
       card("Output", "The SPI stream file read by odr-dabmux (its inputuri).",
         field("Output file", h("div", { class: "row" }, path, btn("Browse…", { icon: "folder", onclick: async () => {
           const p = await fileBrowser({ title: "Where to write the SPI stream", mode: "save", exts: "dat", start: path.value || "/home", filename: path.value.split("/").pop() || "spi-output.dat" });
           if (p) path.value = p;
         } }))), field("Write mode", writeMode)),
       h("div", { class: "grid-2" },
-        card("Carousel", "Must match the SPI subchannel and component in odr-dabmux.", field("Subchannel bitrate", bitrate), field("Packet address", addr), dg.el),
+        card("Carousel", "Must match the SPI subchannel and component in odr-dabmux.", field("Subchannel bitrate", bitrate,
+          { hint: "The packet size follows the bitrate: the largest packet that fits evenly into each 24 ms frame (Opendigitalradio's recommendation)." }), field("Packet address", addr), dg.el),
         card("Refresh schedule", "Logo URLs and EPG feeds are re-fetched and the carousel rebuilt from the last applied state. Apply always fetches too.",
           field("When", rmode), timeBox, intBox)),
       h("div", { class: "grid-2" },
         card("EPG", "Programme information sent in the carousel.", field("Days ahead", days, { hint: "0 disables EPG for all stations. Each day adds data to the carousel." }), field("Timezone", tz, { hint: "Used for schedules and the daily refresh time." }), tzList),
         card("Security", "Network access and sessions.", priv.el, h("div", { class: "small muted" }, "Leave off unless your logos are served from your own LAN - it stops users probing internal services through URL fetching."),
           field("Session length (hours)", sess))),
-      updatesCard()));
+      updatesCard(), creditsCard()));
+}
+
+// Packet size for a bitrate: the largest DAB packet that fits a whole number of
+// times into one 24 ms frame (bitrate x 3 bytes). Mirrors build.packet_size_for.
+const packetSize = (kbps) => [96, 72, 48, 24].find((s) => (kbps * 3) % s === 0);
+
+function bitrateSelect(value) {
+  const opts = [];
+  for (let k = 8; k <= 96; k += 8) {
+    const ps = packetSize(k);
+    opts.push([k, `${k} kbps · ${ps}-byte packets${ps === 24 && k > 8 ? " (less efficient)" : ""}`]);
+  }
+  return sel(value, opts);
+}
+
+const CREDITS = [
+  ["Lucas Gallone", "Original ODR-SPI-Generator: offline SPI logo carousel generator", "https://github.com/LucasGallone/ODR-SPI-Generator"],
+  ["Nick Piggott", "odr-radiodns-bridge, which the original generator was based on", "https://github.com/nickpiggott/odr-radiodns-bridge"],
+  ["Opendigitalradio", "ODR-mmbTools, python-dabmot and python-dabmsc (MOT / MSC encoding)", "https://github.com/Opendigitalradio"],
+  ["Ben Poor (magicbadger)", "python-hybridspi: SPI / EPG binary encoding", "https://github.com/magicbadger/python-hybridspi"],
+  ["Global Radio", "python-mot-epg: EPG MOT parameters", "https://github.com/GlobalRadio/python-mot-epg"],
+  ["KejPi", "AbracaDABra, used to verify SPI decoding", "https://github.com/KejPi/AbracaDABra"],
+  ["Rían Mac Fhionnghaile", "SPI WebFrontend: web UI, EPG, multi-user service", "https://github.com/ryanginn/ODR-SPI-Generator"],
+];
+
+function creditsCard() {
+  return h("div", { class: "card" }, h("div", { class: "card-head" }, icon("heart"), h("div", null, h("h2", null, "Credits"),
+    h("p", null, `ODR SPI Generator ${S.version} is free software (GPLv3), built on the work of:`))),
+  h("div", { class: "table-wrap" }, h("table", null, h("tbody", null, CREDITS.map(([who, what, url]) => h("tr", null,
+    h("td", { class: "nowrap" }, h("b", null, who)), h("td", { class: "small" }, what),
+    h("td", { class: "nowrap" }, h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, url.replace("https://", "")))))))));
+}
+
+function fmtMinSec(sec) {
+  if (sec == null) return "—";
+  const t = Math.round(sec), m = Math.floor(t / 60), s = t % 60;
+  return m ? `${m} min ${s} s` : `${s} s`;
+}
+
+async function dismissWarning(buildId, warning) {
+  try {
+    await api("POST", `/api/builds/${buildId}/dismiss`, { warning });
+    toast(warning === null ? "Warnings dismissed." : "Warning dismissed - it won't flag the status on future builds.", "ok");
+    refreshStatus(); route();
+  } catch (e) { /* toasted */ }
 }
 
 function updatesCard() {
@@ -1470,7 +1567,22 @@ function pageAccount(root) {
           if (p.value !== p2.value) return toast("Passwords do not match.", "error");
           try { await api("POST", "/api/account/password", { current: cur.value, new: p.value }); toast("Password changed.", "ok"); cur.value = p.value = p2.value = ""; } catch (e) { /* toasted */ }
         } })))),
+    h("div", { class: "section-gap" }), appearanceCard(),
     h("div", { class: "section-gap" }), h("div", { class: "small muted" }, `ODR SPI Generator ${S.version}`));
+}
+
+function appearanceCard() {
+  const seg = h("div", { class: "segmented" });
+  const draw = () => {
+    clear(seg);
+    for (const [k, label, ic] of THEMES) {
+      seg.appendChild(h("button", { type: "button", class: getTheme() === k ? "on" : "", onclick: () => { setTheme(k); draw(); renderShell(); } },
+        h("span", { class: "row" }, icon(ic), label)));
+    }
+  };
+  draw();
+  return h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Appearance"),
+    h("p", null, "Saved in this browser. System follows your device's light/dark setting."))), h("div", { class: "card-body" }, seg));
 }
 
 boot();

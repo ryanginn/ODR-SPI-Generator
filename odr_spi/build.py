@@ -1,5 +1,6 @@
 """Snapshotting, URL refresh and carousel generation."""
 
+import hashlib
 import json
 import logging
 import os
@@ -15,13 +16,46 @@ from .encoder import mot, msc, spi_binary
 
 log = logging.getLogger("odr_spi.build")
 
-BITRATES = (8, 16, 24, 32)
+BITRATES = tuple(range(8, 97, 8))
+SLOW_CYCLE = "slow_cycle"
+SLOW_CYCLE_SECONDS = 300
 _lock = threading.Lock()
 _state = {"running": False, "build_id": None}
 
 
 def packet_size_for(bitrate):
-    return min(96, int(bitrate) * 3)
+    """Largest DAB packet size that fits a whole number of times into one 24 ms
+    frame (bitrate x 3 bytes), as recommended by Opendigitalradio:
+    8->24, 16->48, 24->72, 32->96, 48->72, 64->96 ... 96->96."""
+    frame = int(bitrate) * 3
+    return next(s for s in (96, 72, 48, 24) if frame % s == 0)
+
+
+def fmt_duration(seconds):
+    m, s = divmod(int(round(seconds)), 60)
+    return f"{m} min {s} s" if m else f"{s} s"
+
+
+def warning_key(text):
+    """Stable identity of a warning, used to remember dismissals across builds."""
+    if text.startswith("Carousel takes "):
+        return SLOW_CYCLE
+    return "w:" + hashlib.sha1(text.encode()).hexdigest()[:16]
+
+
+def split_dismissed(warnings, stats):
+    """Separate warnings the user dismissed. A dismissed slow-carousel warning
+    comes back if the cycle grows more than 25% beyond the dismissed length."""
+    dismissed = db.get_setting("dismissed_warnings") or {}
+    keep, hidden = [], []
+    for w in warnings:
+        key = warning_key(w)
+        if key in dismissed and (key != SLOW_CYCLE
+                                 or stats.get("cycle_seconds", 0) <= float(dismissed[key]) * 1.25):
+            hidden.append(w)
+        else:
+            keep.append(w)
+    return keep, hidden
 
 
 def parse_hex(v, bits):
@@ -282,8 +316,8 @@ def generate(snap, now=None):
         "epg_objects": pi_count, "payload_bytes": payload, "stream_bytes": len(stream),
         "bitrate": bitrate, "cycle_seconds": round(len(stream) * 8 / (bitrate * 1000), 1),
     }
-    if stats["cycle_seconds"] > 300:
-        warnings.append(f"Carousel takes {stats['cycle_seconds']:.0f}s to cycle at {bitrate} kbps - "
+    if stats["cycle_seconds"] > SLOW_CYCLE_SECONDS:
+        warnings.append(f"Carousel takes {fmt_duration(stats['cycle_seconds'])} to cycle at {bitrate} kbps - "
                         "consider a higher bitrate, fewer EPG days or smaller logos")
     return stream, stats, warnings
 
@@ -355,6 +389,8 @@ def run(trigger, user=None, apply_changes=False, refresh=True):
             _refresh_snapshot_files(snap)
             stream, stats, w = generate(snap)
             warnings += w
+            warnings, hidden = split_dismissed(warnings, stats)
+            stats["dismissed_warnings"] = len(hidden)
             write_output(snap["settings"]["output_path"], stream, snap["settings"].get("write_mode", "inplace"))
             db.x("UPDATE builds SET finished_at=?, status=?, message=?, stats=?, warnings=? WHERE id=?",
                  (time.time(), "warning" if warnings else "ok",

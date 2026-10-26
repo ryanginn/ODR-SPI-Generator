@@ -13,6 +13,7 @@ It runs as a **systemd service**, builds the SPI carousel (station logos, names,
 - **Imports**: legacy SPI/XSI `serviceInformation` XML (logos included, with mis-encoded text like `RaidiÃ³` repaired automatically) and your existing `odr-dabmux` config.
 - **Mux config helper**: the generator gives you ready-made `services` / `subchannels` / `components` entries for odr-dabmux.
 - **One-click updates** from *Settings → Updates*.
+- **Light and dark themes**, and your multiplex name on the login screen, sidebar and browser tab, so you can see at a glance which mux you're editing.
 - **No fragile dependencies.** The encoder (MOT directory mode, MSC datagroups, packet mode, ETSI TS 102 371 binary SI/PI) is pure Python. You no longer need the git-installed `python-dabmot`, `python-dabmsc`, `hybridspi` or `odr-radiodns-bridge` packages.
 
 Compliant with **ETSI TS 102 371** and **ETSI TS 102 818**. The service-information encoding is byte-identical to the original script, which was tested with [AbracaDABra](https://github.com/KejPi/AbracaDABra).
@@ -120,6 +121,10 @@ Per station, under **EPG**:
 
 Merge mode updates stations that share the same primary SId and adds the rest. You can also add everything as new, or replace all stations.
 
+### Warnings
+
+The Activity page lists each build's warnings, such as a logo URL that can't be reached or a carousel that takes over 5 minutes to cycle. **Dismiss** hides a known warning on later builds too, so the status goes back to green. A dismissed slow-carousel warning comes back if the cycle grows more than 25% beyond what you dismissed. *Show them again* restores all dismissed warnings.
+
 ### Users and roles
 
 | Role | Can do |
@@ -168,7 +173,13 @@ components {
 ```
 
 - The SPI service id is 32-bit: `ECC + EId + 2 hex digits`.
-- `bitrate` must match *Settings → Carousel* (8/16/24/32 kbps → 24/48/72/96-byte packets).
+- `bitrate` must match *Settings → Carousel*. The packet size follows the bitrate automatically. It is the largest DAB packet that fits a whole number of times into each 24 ms frame, as Opendigitalradio recommends. Too large and the SPI isn't transmitted; too small and it is slower than necessary.
+
+  | Bitrate (kbps) | 8 | 16 | 24 | 32 | 40 | 48 | 56 | 64 | 72 | 80 | 88 | 96 |
+  | :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+  | Packet size (bytes) | 24 | 48 | 72 | 96 | 24 | 72 | 24 | 96 | 72 | 48 | 24 | 96 |
+
+  40, 56 and 88 kbps only fit 24-byte packets, so they spend more of the bitrate on packet headers. Prefer the other steps.
 - **EEP_B** protection requires a bitrate that is a multiple of 32 kbps, so use **EEP_A** for 8–24 kbps. The page warns you about this.
 
 By default the output file is **rewritten in place**, because ODR-DabMux keeps the file open and rewinds it at the end. *Settings → Output* can switch to atomic replace if your setup reopens the file.
@@ -231,6 +242,18 @@ ODR_SPI_DATA_DIR=./data ODR_SPI_PORT=8090 .venv/bin/odr-spi-generator serve
 The original single-file script is kept in [`legacy/ODR-SPI-Generator.py`](legacy/ODR-SPI-Generator.py) for reference.
 
 ---
+
+### Credits
+
+The full list is also under *Settings → Credits*.
+
+- **Lucas Gallone**: the original [ODR-SPI-Generator](https://github.com/LucasGallone/ODR-SPI-Generator)
+- **Nick Piggott**: [odr-radiodns-bridge](https://github.com/nickpiggott/odr-radiodns-bridge)
+- **Opendigitalradio**: [ODR-mmbTools, python-dabmot, python-dabmsc](https://github.com/Opendigitalradio)
+- **Ben Poor (magicbadger)**: [python-hybridspi](https://github.com/magicbadger/python-hybridspi)
+- **Global Radio**: [python-mot-epg](https://github.com/GlobalRadio/python-mot-epg)
+- **KejPi**: [AbracaDABra](https://github.com/KejPi/AbracaDABra), used to verify decoding
+- **Rían Mac Fhionnghaile**: SPI WebFrontend (web UI, EPG, multi-user service)
 
 ### License
 
