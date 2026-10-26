@@ -969,8 +969,20 @@ async function stationEpg(root, s) {
   const [entries, preview] = await Promise.all([api("GET", `/api/services/${s.id}/programmes`), api("GET", `/api/services/${s.id}/epg/preview`)]);
   const en = toggle("Broadcast EPG for this station", s.epg_enabled);
   const feedUrl = inp(s.epg_feed_url, { type: "url", placeholder: "https://example.com/epg.xml" });
-  const feedType = sel(s.epg_feed_type, [["xmltv", "XMLTV"], ["spi", "SPI / RadioDNS PI XML"]]);
-  const feedChan = inp(s.epg_feed_channel, { placeholder: "e.g. mpbradio1.ie" });
+  const feedType = sel(s.epg_feed_type, [["xmltv", "XMLTV"], ["spi", "SPI / RadioDNS PI XML"], ["mpbnl", "MPBNL (JSON, one request per day)"]]);
+  const feedChan = inp(s.epg_feed_channel, { placeholder: "e.g. station.example" });
+  const chanField = field("Channel id (XMLTV)", feedChan);
+  const feedHint = h("div", { class: "small muted" });
+  const syncFeedType = () => {
+    const mpbnl = feedType.value === "mpbnl";
+    chanField.classList.toggle("hidden", feedType.value !== "xmltv");
+    feedUrl.placeholder = mpbnl ? "https://example.com/api/schedule?id=1&day=Monday" : "https://example.com/epg.xml";
+    feedHint.textContent = mpbnl
+      ? "Paste the URL for any one day. The day parameter (or a {day} placeholder) is replaced with Monday…Sunday to fetch the next 7 days on every refresh."
+      : "";
+  };
+  feedType.addEventListener("change", syncFeedType);
+  syncFeedType();
   const saveFeed = async () => {
     try {
       await api("PUT", `/api/services/${s.id}/epg`, { epg_enabled: en.box.checked, epg_feed_url: feedUrl.value, epg_feed_type: feedType.value, epg_feed_channel: feedChan.value });
@@ -1001,8 +1013,8 @@ async function stationEpg(root, s) {
         h("div", { class: "card-body stack" }, en.el,
           h("div", { class: "small muted" }, "Hand-entered programmes take priority; feed programmes fill the gaps.")),
         h("div", { class: "card-foot" }, btn("Save", { cls: "primary", onclick: saveFeed }))),
-      h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Schedule feed (optional)"), h("p", null, "Import programmes from an XMLTV or SPI XML URL, refreshed with the logos."))),
-        h("div", { class: "card-body stack" }, field("Feed URL", feedUrl), h("div", { class: "grid-2" }, field("Format", feedType), field("Channel id (XMLTV)", feedChan)),
+      h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Schedule feed (optional)"), h("p", null, "Import programmes from an XMLTV, SPI XML or MPBNL URL, refreshed with the logos."))),
+        h("div", { class: "card-body stack" }, field("Format", feedType), field("Feed URL", feedUrl), feedHint, chanField,
           s.epg_feed_status ? h("div", { class: "small " + (s.epg_feed_status.startsWith("error") ? "chip red" : "muted") }, s.epg_feed_status, s.epg_feed_checked ? ` · ${fmtAgo(s.epg_feed_checked)}` : "") : null),
         h("div", { class: "card-foot" }, btn("Save & fetch", { cls: "primary", onclick: saveFeed })))),
     h("div", { class: "section-gap" }),
@@ -1359,7 +1371,63 @@ async function pageSettings(root) {
       h("div", { class: "grid-2" },
         card("EPG", "Programme information sent in the carousel.", field("Days ahead", days, { hint: "0 disables EPG for all stations. Each day adds data to the carousel." }), field("Timezone", tz, { hint: "Used for schedules and the daily refresh time." }), tzList),
         card("Security", "Network access and sessions.", priv.el, h("div", { class: "small muted" }, "Leave off unless your logos are served from your own LAN - it stops users probing internal services through URL fetching."),
-          field("Session length (hours)", sess)))));
+          field("Session length (hours)", sess))),
+      updatesCard()));
+}
+
+function updatesCard() {
+  const body = h("div", { class: "card-body stack" }, h("span", { class: "muted" }, "Loading…"));
+  const foot = h("div", { class: "card-foot" });
+  const card = h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Updates"),
+    h("p", null, "Update the generator from its git source in one click. Configuration and data are kept."))), body, foot);
+  let timer = null, startCommit = null, wasRunning = false;
+  const short = (c) => (c && c !== "unknown" ? c.slice(0, 7) : "unknown");
+  const request = async (action) => {
+    if (action === "apply" && !(await confirmDialog("Download and install the latest version now? The service restarts and this page reconnects automatically; the SPI output file is not interrupted.", { okText: "Update now" }))) return;
+    try { await api("POST", "/api/update", { action }); toast(action === "apply" ? "Update started…" : "Checking for updates…"); poll(1000); } catch (e) { /* toasted */ }
+  };
+  const draw = (u) => {
+    const st = u.status || {};
+    const busy = u.pending || st.state === "running";
+    if (startCommit === null) startCommit = u.current_commit;
+    clear(body); clear(foot);
+    foot.classList.toggle("hidden", !u.enabled);
+    if (!u.enabled) {
+      put(body, h("div", { class: "banner amber" }, icon("info"), "One-click updates need the generator to be installed from a git checkout with install.sh."),
+        h("dl", { class: "kv" }, h("dt", null, "Version"), h("dd", null, u.version)));
+      return busy;
+    }
+    put(body,
+      h("dl", { class: "kv" },
+        h("dt", null, "Installed"), h("dd", { class: "mono" }, `${u.version} · ${short(u.current_commit)}`),
+        h("dt", null, "Source"), h("dd", { class: "mono small" }, `${u.source} (${u.branch})`),
+        h("dt", null, "Last check"), h("dd", null, st.checked_at ? fmtAgo(st.checked_at) : "never")),
+      busy ? h("div", { class: "banner blue" }, h("span", { class: "spin" }), st.message || "Starting…")
+        : st.state === "error" ? h("div", { class: "banner red" }, icon("alert"), st.message)
+        : st.available ? h("div", { class: "banner green" }, icon("arrowUp"), `Update available: ${short(st.remote_commit)}`)
+        : st.message ? h("div", { class: "small muted" }, st.message) : null);
+    put(foot, btn("Check for updates", { icon: "refresh", disabled: busy, onclick: () => request("check") }),
+      btn("Update now", { cls: "primary", icon: "zap", disabled: busy, onclick: () => request("apply") }));
+    return busy;
+  };
+  const poll = async (delay = 0) => {
+    clearTimeout(timer);
+    if (delay) { timer = setTimeout(() => poll(), delay); return; }
+    if (!card.isConnected && startCommit !== null) return;
+    let u;
+    try { u = await api("GET", "/api/update", undefined, { quiet: true }); }
+    catch (e) { if (wasRunning) timer = setTimeout(() => poll(), 2000); return; } // service restarting
+    const busy = draw(u);
+    if (wasRunning && !busy && u.current_commit !== startCommit) {
+      toast(`Updated to ${short(u.current_commit)} - reloading.`, "ok");
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+    wasRunning = busy;
+    if (busy) timer = setTimeout(() => poll(), 2000);
+  };
+  poll();
+  return card;
 }
 
 /* ============================== audit / account ============================== */

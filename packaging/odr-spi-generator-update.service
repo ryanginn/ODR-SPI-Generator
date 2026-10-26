@@ -1,0 +1,10 @@
+[Unit]
+Description=ODR SPI Generator updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/odr-spi-generator-update
+TimeoutStartSec=20min
+PrivateTmp=yes

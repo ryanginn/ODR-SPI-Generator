@@ -672,8 +672,8 @@ def set_epg(sid):
     check_service_access(current_user(), sid)
     data = json_body()
     ftype = data.get("epg_feed_type", "xmltv")
-    if ftype not in ("xmltv", "spi"):
-        raise ApiError("Feed type must be XMLTV or SPI XML.")
+    if ftype not in ("xmltv", "spi", "mpbnl"):
+        raise ApiError("Feed type must be XMLTV, SPI XML or MPBNL.")
     url = _url(data.get("epg_feed_url"), "Feed URL")
     db.x("UPDATE services SET epg_enabled = ?, epg_feed_url = ?, epg_feed_type = ?, epg_feed_channel = ?, "
          "updated_at = ? WHERE id = ?",
@@ -1276,6 +1276,74 @@ def import_commit(iid):
                     build.refresh_logo(logo, allow)
         threading.Thread(target=fetch_all, daemon=True).start()
     return jsonify(created=created, updated=updated, fetching=len(url_logos))
+
+
+# --- one-click update (admin) -------------------------------------------------------------
+
+def _update_paths():
+    cfg = current_app.config["ODR_CFG"]
+    return {
+        "request": os.path.join(cfg["data_dir"], "update-request"),
+        "status": cfg.get("update_status", "/var/lib/odr-spi-generator-update/status.json"),
+        "conf": cfg.get("update_conf", "/etc/odr-spi-generator/update.conf"),
+        "commit": cfg.get("installed_commit", "/opt/odr-spi-generator/COMMIT"),
+    }
+
+
+def _read_small(path, limit=65536):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def _update_info():
+    paths = _update_paths()
+    conf = {}
+    for line in (_read_small(paths["conf"]) or "").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            conf[k.strip()] = v.strip()
+    status = {}
+    try:
+        status = json.loads(_read_small(paths["status"]) or "{}")
+    except ValueError:
+        pass
+    source = re.sub(r"(://)[^/@]*@", r"\1", conf.get("REPO_URL", ""), count=1)  # hide embedded credentials
+    return {
+        "enabled": bool(conf.get("REPO_URL") and conf.get("BRANCH")),
+        "version": __version__,
+        "current_commit": (_read_small(paths["commit"]) or "").strip(),
+        "source": source, "branch": conf.get("BRANCH", ""),
+        "status": status if isinstance(status, dict) else {},
+        "pending": os.path.exists(paths["request"]),
+    }
+
+
+@bp.get("/api/update")
+@require("admin")
+def update_info():
+    return jsonify(_update_info())
+
+
+@bp.post("/api/update")
+@require("admin")
+def request_update():
+    action = json_body().get("action")
+    if action not in ("check", "apply"):
+        raise ApiError("Action must be check or apply.")
+    info = _update_info()
+    if not info["enabled"]:
+        raise ApiError("Updates are not configured - reinstall from a git checkout with install.sh.")
+    if info["status"].get("state") == "running" or info["pending"]:
+        raise ApiError("An update task is already running.", 409)
+    path = _update_paths()["request"]
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o640)
+    with os.fdopen(fd, "w") as f:
+        f.write(action)
+    audit("update." + action)
+    return jsonify(ok=True)
 
 
 # --- audit --------------------------------------------------------------------------------

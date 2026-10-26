@@ -23,6 +23,7 @@
 - **Filesystem**: imported logo paths are confined to the chosen folder (realpath containment). The output must be an absolute `.dat` path. Symlinks are refused, and the file is opened with `O_NOFOLLOW`.
 - **SQL**: every query is parameterised. Column names come only from fixed server-side lists.
 - **Service**: runs as an unprivileged user, never root. The systemd sandbox has no capabilities, `NoNewPrivileges`, `ProtectSystem=full`, `PrivateTmp`/`PrivateDevices`, a syscall filter and `MemoryDenyWriteExecute`. `systemd-analyze security` exposure is 1.9 ("OK").
+- **One-click updates**: the web service never updates itself. An admin's click writes a request file that holds only `check` or `apply`. A root-owned systemd path unit then runs the updater, which pulls from the git source and branch recorded in root-owned `/etc/odr-spi-generator/update.conf` at install time. The request file is never followed if it is a symlink, and status is written to a separate root-owned directory. A compromised web service can therefore start an update but cannot choose what gets installed. Updating does run the fetched `install.sh` as root, so only install from a repository you control.
 - **Audit log**: logins, failures and every change, with user and IP address.
 
 ## Audit (v2.0.0)

@@ -110,8 +110,16 @@ def refresh_logo(logo, allow_private):
 def refresh_feed(service, allow_private):
     now = time.time()
     try:
-        data, _, _ = fetch.fetch(service["epg_feed_url"], allow_private=allow_private, max_bytes=20 * 1024 * 1024)
-        progs = epg.parse_feed(data, service["epg_feed_type"], service["epg_feed_channel"])
+        if service["epg_feed_type"] == "mpbnl":
+            days = max(7, int(db.get_setting("epg_days") or 0))
+            progs = epg.fetch_mpbnl(
+                service["epg_feed_url"], days, epg.get_tz(db.get_setting("timezone")),
+                lambda u: fetch.fetch(u, allow_private=allow_private, max_bytes=2 * 1024 * 1024,
+                                      accept="application/json")[0])
+        else:
+            data, _, _ = fetch.fetch(service["epg_feed_url"], allow_private=allow_private,
+                                     max_bytes=20 * 1024 * 1024)
+            progs = epg.parse_feed(data, service["epg_feed_type"], service["epg_feed_channel"])
         horizon_lo = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
         horizon_hi = (datetime.now(timezone.utc) + timedelta(days=35)).isoformat()
         progs = [p for p in progs if horizon_lo <= p["start"] <= horizon_hi][:5000]

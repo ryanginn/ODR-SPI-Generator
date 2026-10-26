@@ -16,11 +16,11 @@ LEGACY_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <serviceInformation xmlns="http://www.worlddab.org/schemas/spi/31" creationTime="2014-06-13T10:32:41+01:00">
   <services id="e32ea1">
     <service>
-      <shortName>MPB R1</shortName>
-      <mediumName>MPB Radio 1</mediumName>
+      <shortName>Demo R1</shortName>
+      <mediumName>Demo Radio 1</mediumName>
       <mediaDescription><multimedia url="radio1_32x32.png" mimeValue="image/png" width="32" height="32"/></mediaDescription>
       <mediaDescription><multimedia url="../../etc/passwd" mimeValue="image/png" width="32" height="32"/></mediaDescription>
-      <mediaDescription><shortDescription>Mayo's No.1 Hit Music Station</shortDescription></mediaDescription>
+      <mediaDescription><shortDescription>Number one for hits</shortDescription></mediaDescription>
       <genre href="urn:tva:metadata:cs:ContentCS:2002:10" type="rds_pty">Pop</genre>
       <genre href="urn:tva:metadata:cs:ContentCS:2002:3.6.8" type="other">Dance</genre>
       <bearer id="dab:2e3.2ea1.2491.0" cost="10"/>
@@ -100,8 +100,8 @@ class ApiTest(unittest.TestCase):
         st, body = self.call("put", "/api/settings", {"output_path": os.path.join(out, "spi.dat"), "bitrate": 16,
                                                       "epg_days": 2})
         self.assertEqual(st, 200, body)
-        st, body = self.call("put", "/api/ensemble", {"ecc": "e3", "eid": "2ea1", "short_name": "MPB",
-                                                      "medium_name": "MPB DAB"})
+        st, body = self.call("put", "/api/ensemble", {"ecc": "e3", "eid": "2ea1", "short_name": "DEMO",
+                                                      "medium_name": "Demo DAB"})
         self.assertEqual(st, 200, body)
 
         # legacy import with a local folder upload
@@ -120,7 +120,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual((st, res["created"]), (200, 2), res)
 
         services = self.call("get", "/api/services")[1]
-        r1 = next(s for s in services if s["short_name"] == "MPB R1")
+        r1 = next(s for s in services if s["short_name"] == "Demo R1")
         self.assertEqual(r1["genres"], ["urn:tva:metadata:cs:ContentCS:2002:3.6.8"])
         self.assertEqual(len(r1["logos"]), 1)
 
@@ -207,6 +207,40 @@ class ApiTest(unittest.TestCase):
         st, body = self.call("put", "/api/settings", {"output_path": os.path.join(self.dir, "link.dat")})
         self.assertEqual(st, 400)
         self.assertIn("symlink", body["error"])
+
+    def test_update_requests(self):
+        self.login_admin()
+        cfg = self.app.config["ODR_CFG"]
+        cfg.update(update_conf=os.path.join(self.dir, "update.conf"), installed_commit=os.path.join(self.dir, "COMMIT"),
+                   update_status=os.path.join(self.dir, "status.json"))
+        st, body = self.call("post", "/api/update", {"action": "apply"})
+        self.assertEqual(st, 400)  # not installed from git
+        with open(cfg["update_conf"], "w") as f:
+            f.write("REPO_URL=https://user:secret@example.com/owner/repo.git\nBRANCH=main\n")
+        with open(cfg["installed_commit"], "w") as f:
+            f.write("abc1234def\n")
+        info = self.call("get", "/api/update")[1]
+        self.assertTrue(info["enabled"])
+        self.assertEqual(info["source"], "https://example.com/owner/repo.git")
+        self.assertEqual(info["current_commit"], "abc1234def")
+        st, _ = self.call("post", "/api/update", {"action": "rm -rf /"})
+        self.assertEqual(st, 400)
+        st, _ = self.call("post", "/api/update", {"action": "check"})
+        self.assertEqual(st, 200)
+        with open(os.path.join(cfg["data_dir"], "update-request")) as f:
+            self.assertEqual(f.read(), "check")
+        st, _ = self.call("post", "/api/update", {"action": "apply"})
+        self.assertEqual(st, 409)  # previous request not picked up yet
+        # editors cannot trigger updates
+        self.call("post", "/api/users", {"username": "ed1", "role": "editor", "password": "editor password 1"})
+        ec = self.app.test_client()
+        self.call("post", "/api/login", {"username": "ed1", "password": "editor password 1"}, client=ec, csrf="")
+        ecsrf = self.call("get", "/api/state", client=ec, csrf="")[1]["csrf"]
+        self.call("post", "/api/account/password", {"current": "editor password 1", "new": "editor password 2"},
+                  client=ec, csrf=ecsrf)
+        self.assertEqual(self.call("get", "/api/services", client=ec, csrf=ecsrf)[0], 200)
+        st, body = self.call("get", "/api/update", client=ec, csrf=ecsrf)
+        self.assertEqual((st, body["error"]), (403, "Administrator access required."))
 
     def test_login_lockout(self):
         self.login_admin()
