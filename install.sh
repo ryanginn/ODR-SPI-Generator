@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ODR SPI Generator installer.
+# MPBNL SPI WebFrontend installer.
 #
 #   sudo ./install.sh                 interactive install / upgrade
 #   sudo ./install.sh --yes           accept defaults
@@ -48,9 +48,9 @@ ask() { # ask "question" default -> echoes answer
 
 [ "$(id -u)" = 0 ] || die "run as root: sudo $0"
 command -v systemctl >/dev/null || die "systemd is required"
-[ -f "$SRC/odr_spi/__init__.py" ] || die "run this script from the ODR-SPI-Generator source directory"
+[ -f "$SRC/odr_spi/__init__.py" ] || die "run this script from the source directory (the git checkout)"
 
-bold "ODR SPI Generator installer"
+bold "MPBNL SPI WebFrontend installer"
 UPGRADE=0
 [ -f "$CONF" ] && UPGRADE=1 && info "Existing installation found - upgrading (config and data are kept)."
 

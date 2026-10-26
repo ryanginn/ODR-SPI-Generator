@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove ODR SPI Generator.
+# Remove MPBNL SPI WebFrontend.
 #   sudo ./uninstall.sh           keep configuration and data (/etc, /var/lib)
 #   sudo ./uninstall.sh --purge   also delete configuration, data and the odr-spi user
 set -euo pipefail

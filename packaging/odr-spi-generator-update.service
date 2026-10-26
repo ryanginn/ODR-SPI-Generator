@@ -1,5 +1,5 @@
 [Unit]
-Description=ODR SPI Generator updater
+Description=MPBNL SPI WebFrontend updater
 After=network-online.target
 Wants=network-online.target
 

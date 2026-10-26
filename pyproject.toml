@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "odr-spi-generator"
 dynamic = ["version"]
-description = "DAB+ SPI (logos, service information and EPG) carousel generator with a web UI for ODR-DabMux"
+description = "MPBNL SPI WebFrontend: DAB+ SPI (logos, service information and EPG) carousel generator with a web UI for ODR-DabMux"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.9"

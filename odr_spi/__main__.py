@@ -66,7 +66,7 @@ def serve(cfg):
         from cheroot.ssl.builtin import BuiltinSSLAdapter
         server.ssl_adapter = BuiltinSSLAdapter(cfg["tls_cert"], cfg["tls_key"])
     scheme = "https" if server.ssl_adapter else "http"
-    log.info("ODR-SPI-Generator %s listening on %s://%s:%d", __version__, scheme, cfg["bind"], cfg["port"])
+    log.info("MPBNL SPI WebFrontend %s listening on %s://%s:%d", __version__, scheme, cfg["bind"], cfg["port"])
     try:
         server.start()
     except KeyboardInterrupt:

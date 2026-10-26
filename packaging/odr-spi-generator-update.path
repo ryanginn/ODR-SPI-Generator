@@ -1,5 +1,5 @@
 [Unit]
-Description=Watch for update requests from the ODR SPI Generator web UI
+Description=Watch for update requests from the MPBNL SPI WebFrontend web UI
 
 [Path]
 PathExists=/var/lib/odr-spi-generator/update-request

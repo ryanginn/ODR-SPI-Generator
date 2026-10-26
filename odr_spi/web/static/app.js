@@ -1,4 +1,4 @@
-// ODR SPI Generator web UI. Plain ES module, no build step.
+// MPBNL SPI WebFrontend web UI. Plain ES module, no build step.
 // All DOM is built with h(), which only ever creates text nodes for content,
 // so user-provided strings are never parsed as HTML.
 
@@ -349,7 +349,7 @@ function themeToggle() {
 }
 
 function setTitle() {
-  document.title = S.muxName ? `${S.muxName} · ODR SPI Generator` : "ODR SPI Generator";
+  document.title = S.muxName ? `${S.muxName} · MPBNL SPI WebFrontend` : "MPBNL SPI WebFrontend";
 }
 try { S.collapsed = localStorage.getItem("odrspi.collapsed") === "1"; } catch (e) { /* ignore */ }
 
@@ -405,14 +405,14 @@ async function boot() {
 
 function renderFatal() {
   const app = clear(document.getElementById("app"));
-  app.appendChild(h("div", { class: "auth" }, h("div", { class: "auth-card" }, brand(), h("p", null, "Cannot reach the ODR SPI Generator service."),
+  app.appendChild(h("div", { class: "auth" }, h("div", { class: "auth-card" }, brand(), h("p", null, "Cannot reach the MPBNL SPI WebFrontend service."),
     btn("Retry", { cls: "primary", onclick: boot }))));
 }
 
 function brand() {
   return h("div", { class: "brand" },
-    h("img", { class: "brand-logo logo-dark", src: "/static/logo-dark.svg", alt: "SPI WebFrontend" }),
-    h("img", { class: "brand-logo logo-light", src: "/static/logo-light.svg", alt: "SPI WebFrontend" }),
+    h("img", { class: "brand-logo logo-dark", src: "/static/logo-dark.svg", alt: "MPBNL SPI WebFrontend" }),
+    h("img", { class: "brand-logo logo-light", src: "/static/logo-light.svg", alt: "MPBNL SPI WebFrontend" }),
     S.muxName ? h("div", { class: "mux-name", title: "Multiplex" }, icon("radio"), h("span", { class: "ellipsis" }, S.muxName)) : null);
 }
 
@@ -1061,7 +1061,7 @@ async function stationEpg(root, s) {
       entries.length ? h("div", { class: "table-wrap" }, h("table", null, h("thead", null, h("tr", null, h("th", null, "Programme"), h("th", null, "When"), h("th", null, "Start"), h("th", null, "Length"), h("th", null, "Type"))), tbody))
         : h("div", { class: "card-body muted" }, "No programmes yet.")),
     h("div", { class: "section-gap" }),
-    h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Preview"), h("p", null, "What receivers will see (hand-entered in purple, feed in blue)."))),
+    h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Preview"), h("p", null, "What receivers will see (hand-entered in teal, feed in blue)."))),
       h("div", { class: "card-body" }, week)));
 }
 
@@ -1447,12 +1447,12 @@ const CREDITS = [
   ["Ben Poor (magicbadger)", "python-hybridspi: SPI / EPG binary encoding", "https://github.com/magicbadger/python-hybridspi"],
   ["Global Radio", "python-mot-epg: EPG MOT parameters", "https://github.com/GlobalRadio/python-mot-epg"],
   ["KejPi", "AbracaDABra, used to verify SPI decoding", "https://github.com/KejPi/AbracaDABra"],
-  ["Rían Mac Fhionnghaile", "SPI WebFrontend: web UI, EPG, multi-user service", "https://github.com/ryanginn/ODR-SPI-Generator"],
+  ["Rían Mac Fhionnghaile", "MPBNL SPI WebFrontend: web UI, EPG, multi-user service", "https://github.com/ryanginn/ODR-SPI-Generator"],
 ];
 
 function creditsCard() {
   return h("div", { class: "card" }, h("div", { class: "card-head" }, icon("heart"), h("div", null, h("h2", null, "Credits"),
-    h("p", null, `ODR SPI Generator ${S.version} is free software (GPLv3), built on the work of:`))),
+    h("p", null, `MPBNL SPI WebFrontend ${S.version} is free software (GPLv3), built on the work of:`))),
   h("div", { class: "table-wrap" }, h("table", null, h("tbody", null, CREDITS.map(([who, what, url]) => h("tr", null,
     h("td", { class: "nowrap" }, h("b", null, who)), h("td", { class: "small" }, what),
     h("td", { class: "nowrap" }, h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, url.replace("https://", "")))))))));
@@ -1568,7 +1568,7 @@ function pageAccount(root) {
           try { await api("POST", "/api/account/password", { current: cur.value, new: p.value }); toast("Password changed.", "ok"); cur.value = p.value = p2.value = ""; } catch (e) { /* toasted */ }
         } })))),
     h("div", { class: "section-gap" }), appearanceCard(),
-    h("div", { class: "section-gap" }), h("div", { class: "small muted" }, `ODR SPI Generator ${S.version}`));
+    h("div", { class: "section-gap" }), h("div", { class: "small muted" }, `MPBNL SPI WebFrontend ${S.version}`));
 }
 
 function appearanceCard() {

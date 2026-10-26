@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Root-side updater for ODR SPI Generator, started by odr-spi-generator-update.path
+# Root-side updater for MPBNL SPI WebFrontend, started by odr-spi-generator-update.path
 # when the web UI drops a request file, or by hand: sudo odr-spi-generator-update [check|apply]
 #
 # The request file only selects "check" or "apply"; everything else (repository,

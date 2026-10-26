@@ -1,4 +1,6 @@
-# ODR SPI Generator
+# MPBNL SPI WebFrontend
+
+*Formerly ODR SPI Generator. It still installs as the `odr-spi-generator` service and command.*
 
 A self-hosted **DAB+ SPI (Service & Programme Information)** generator for [OpenDigitalRadio](https://github.com/Opendigitalradio/) multiplexes, with a web UI.
 
@@ -253,7 +255,7 @@ The full list is also under *Settings → Credits*.
 - **Ben Poor (magicbadger)**: [python-hybridspi](https://github.com/magicbadger/python-hybridspi)
 - **Global Radio**: [python-mot-epg](https://github.com/GlobalRadio/python-mot-epg)
 - **KejPi**: [AbracaDABra](https://github.com/KejPi/AbracaDABra), used to verify decoding
-- **Rían Mac Fhionnghaile**: SPI WebFrontend (web UI, EPG, multi-user service)
+- **Rían Mac Fhionnghaile**: MPBNL SPI WebFrontend (web UI, EPG, multi-user service)
 
 ### License
 

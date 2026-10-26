@@ -9,9 +9,9 @@
   --text: #e7e9f0;
   --text-2: #b4b9c8;
   --muted: #7d8396;
-  --accent: #6d6af8;
-  --accent-2: #8b88ff;
-  --accent-bg: rgba(109, 106, 248, .14);
+  --accent: #0b7a75;
+  --accent-2: #3ccfc4;
+  --accent-bg: rgba(20, 184, 166, .14);
   --green: #22c55e;
   --green-bg: rgba(34, 197, 94, .12);
   --red: #f05252;
@@ -28,7 +28,7 @@
   --topbar-bg: rgba(10, 12, 17, .86);
   --hover: #1f2330;
   --hover-border: #3a4057;
-  --accent-hover: #7c79ff;
+  --accent-hover: #0d8a84;
   --code-bg: #07080c;
   --code-text: #cfd3e1;
   --backdrop: rgba(3, 4, 8, .7);
@@ -39,7 +39,7 @@
   --blue-text: #8cc6ff;
   --green-text: #7ee2a3;
   --glow-a: rgba(1, 102, 102, .22);
-  --glow-b: rgba(109, 106, 248, .12);
+  --glow-b: rgba(20, 184, 166, .10);
   color-scheme: dark;
 }
 
@@ -55,10 +55,10 @@
     --text: #111827;
     --text-2: #374151;
     --muted: #6b7280;
-    --accent: #5753e6;
-    --accent-2: #4844d6;
-    --accent-bg: rgba(87, 83, 230, .10);
-    --accent-hover: #4844d6;
+    --accent: #016666;
+    --accent-2: #016666;
+    --accent-bg: rgba(1, 102, 102, .09);
+    --accent-hover: #015252;
     --green: #15803d;
     --green-bg: rgba(22, 163, 74, .11);
     --red: #dc2626;
@@ -81,7 +81,7 @@
     --blue-text: #1e40af;
     --green-text: #166534;
     --glow-a: rgba(1, 102, 102, .14);
-    --glow-b: rgba(87, 83, 230, .08);
+    --glow-b: rgba(1, 102, 102, .06);
     color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -96,10 +96,10 @@
     --text: #111827;
     --text-2: #374151;
     --muted: #6b7280;
-    --accent: #5753e6;
-    --accent-2: #4844d6;
-    --accent-bg: rgba(87, 83, 230, .10);
-    --accent-hover: #4844d6;
+    --accent: #016666;
+    --accent-2: #016666;
+    --accent-bg: rgba(1, 102, 102, .09);
+    --accent-hover: #015252;
     --green: #15803d;
     --green-bg: rgba(22, 163, 74, .11);
     --red: #dc2626;
@@ -122,7 +122,7 @@
     --blue-text: #1e40af;
     --green-text: #166534;
     --glow-a: rgba(1, 102, 102, .14);
-    --glow-b: rgba(87, 83, 230, .08);
+    --glow-b: rgba(1, 102, 102, .06);
     color-scheme: light;
   }
   :root:not([data-theme="dark"]) .logo-dark { display: none; }
