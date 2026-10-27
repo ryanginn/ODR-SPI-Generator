@@ -48,6 +48,7 @@ const ICONS = {
   moon: [["path", "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"]],
   monitor: [["rect", 2, 3, 20, 14, 2], ["path", "M8 21h8M12 17v4"]],
   heart: [["path", "M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"]],
+  login: [["path", "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"]],
   wifiOff: [["path", "M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"]],
 };
 
@@ -418,8 +419,9 @@ function brand() {
 
 function authCard(children, wide = false) {
   const app = clear(document.getElementById("app"));
-  const card = h("div", { class: "auth-card" + (wide ? " wide" : "") }, brand(), children);
-  app.appendChild(h("div", { class: "auth" }, card));
+  const card = h("div", { class: "auth-card" + (wide ? " wide" : "") }, children);
+  app.appendChild(h("div", { class: "auth" }, h("div", { class: "auth-wrap" }, brand(), card,
+    h("div", { class: "auth-foot" }, `MPBNL © ${new Date().getFullYear()}`))));
   return card;
 }
 
@@ -427,9 +429,11 @@ function renderLogin() {
   const u = inp("", { autocomplete: "username", required: true });
   const p = h("input", { type: "password", autocomplete: "current-password", required: true });
   const err = h("div", { class: "banner red hidden" });
-  const submit = btn("Sign in", { cls: "primary lg", type: "submit" });
-  const form = h("form", { class: "stack" }, h("h1", null, "Sign in"), h("p", { class: "muted" }, "Service & Programme Information manager"),
-    err, field("Username", u), field("Password", p), submit);
+  const submit = btn("Sign in", { cls: "primary lg block", type: "submit", icon: "login" });
+  const form = h("form", { class: "stack" }, h("h1", null, "Sign in to the panel"),
+    h("p", { class: "lead" }, "Manage your stations' logos, EPG and service information."),
+    err, field("Username", u), field("Password", p), submit,
+    h("p", { class: "auth-help" }, "Forgot your password? Ask an administrator to reset it."));
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     submit.disabled = true;
