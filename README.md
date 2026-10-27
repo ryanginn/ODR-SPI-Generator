@@ -1,4 +1,6 @@
-# ODR SPI Generator
+# MPBNL SPI WebFrontend
+
+*Formerly ODR SPI Generator. It still installs as the `odr-spi-generator` service and command.*
 
 A self-hosted **DAB+ SPI (Service & Programme Information)** generator for [OpenDigitalRadio](https://github.com/Opendigitalradio/) multiplexes, with a web UI.
 
@@ -9,9 +11,11 @@ It runs as a **systemd service**, builds the SPI carousel (station logos, names,
 - **Web UI**: manage stations, logos, EPG, the ensemble, users and settings from a browser.
 - **Multi-user, with per-station access.** Station owners can update their own logos, descriptions and schedules without touching anyone else's.
 - **Logos by upload or URL.** URL logos are re-fetched every night at midnight (configurable) and on every *Apply*. If a URL can't be reached, the last good image is kept.
-- **EPG**: a weekly schedule editor plus optional XMLTV / SPI-XML feed import, broadcast as binary Programme Information for up to 14 days ahead.
+- **EPG**: a weekly schedule editor plus optional XMLTV, SPI-XML or MPBNL feed import, broadcast as binary Programme Information for up to 14 days ahead.
 - **Imports**: legacy SPI/XSI `serviceInformation` XML (logos included, with mis-encoded text like `RaidiÃ³` repaired automatically) and your existing `odr-dabmux` config.
 - **Mux config helper**: the generator gives you ready-made `services` / `subchannels` / `components` entries for odr-dabmux.
+- **One-click updates** from *Settings → Updates*.
+- **Light and dark themes**, and your multiplex name on the login screen, sidebar and browser tab, so you can see at a glance which mux you're editing.
 - **No fragile dependencies.** The encoder (MOT directory mode, MSC datagroups, packet mode, ETSI TS 102 371 binary SI/PI) is pure Python. You no longer need the git-installed `python-dabmot`, `python-dabmsc`, `hybridspi` or `odr-radiodns-bridge` packages.
 
 Compliant with **ETSI TS 102 371** and **ETSI TS 102 818**. The service-information encoding is byte-identical to the original script, which was tested with [AbracaDABra](https://github.com/KejPi/AbracaDABra).
@@ -59,8 +63,11 @@ Installation complete.
 
 ### Upgrade / uninstall
 
+When installed from a git checkout, admins can update from **Settings → Updates**. *Check for updates* compares the installed commit with the branch you installed from, and *Update now* downloads and installs it. Configuration, data and the SPI output file are kept, and the page reconnects after the service restarts. The same works from a shell:
+
 ```bash
-git pull && sudo ./install.sh        # upgrades code, keeps config + data
+sudo odr-spi-generator-update check  # or: apply
+git pull && sudo ./install.sh        # manual upgrade, keeps config + data
 sudo ./uninstall.sh                  # removes the service, keeps /etc and /var/lib data
 sudo ./uninstall.sh --purge          # removes everything (not your .dat file)
 ```
@@ -96,7 +103,10 @@ URL logos are fetched straight away, on every *Apply*, and on the refresh schedu
 Per station, under **EPG**:
 
 - **Programmes**: recurring weekly shows (pick days, optional start/end dates) and one-off programmes, each with title, description and genres.
-- **Feed (optional)**: an **XMLTV** URL (with channel id) or an **SPI / RadioDNS PI XML** URL. Hand-entered programmes take priority and feed programmes fill the gaps.
+- **Feed (optional)**: hand-entered programmes take priority and feed programmes fill the gaps. Supported formats:
+  - **XMLTV** URL, with the channel id to use.
+  - **SPI / RadioDNS PI XML** URL.
+  - **MPBNL**: a JSON schedule API queried one day at a time. Paste the URL for any one day, e.g. `https://example.com/api/schedule?id=1&day=Monday`. On every refresh the generator requests it once per weekday (`day=Monday` … `day=Sunday`) to cover the next 7 days. You can also put a `{day}` placeholder anywhere in the URL instead. Each response is a JSON list of shows with `showname`, `showdesc`, `days` (comma-separated weekday names), `fromTime` and `tilTime` (`HH:MM:SS`, local time; `24:00:00` or a time earlier than `fromTime` runs past midnight).
 - **Preview**: the next days as receivers will get them.
 
 *Settings → EPG* sets how many days to broadcast (default 7, 0 disables) and the timezone. Each extra day adds data, and the Activity page shows the full carousel cycle time at your bitrate.
@@ -112,6 +122,10 @@ Per station, under **EPG**:
 - text mangled by a wrong encoding (`RaidiÃ³ RÃ­ RÃ¡`) is repaired (`Raidió Rí Rá`) and listed for review.
 
 Merge mode updates stations that share the same primary SId and adds the rest. You can also add everything as new, or replace all stations.
+
+### Warnings
+
+The Activity page lists each build's warnings, such as a logo URL that can't be reached or a carousel that takes over 5 minutes to cycle. **Dismiss** hides a known warning on later builds too, so the status goes back to green. A dismissed slow-carousel warning comes back if the cycle grows more than 25% beyond what you dismissed. *Show them again* restores all dismissed warnings.
 
 ### Users and roles
 
@@ -161,7 +175,13 @@ components {
 ```
 
 - The SPI service id is 32-bit: `ECC + EId + 2 hex digits`.
-- `bitrate` must match *Settings → Carousel* (8/16/24/32 kbps → 24/48/72/96-byte packets).
+- `bitrate` must match *Settings → Carousel*. The packet size follows the bitrate automatically. It is the largest DAB packet that fits a whole number of times into each 24 ms frame, as Opendigitalradio recommends. Too large and the SPI isn't transmitted; too small and it is slower than necessary.
+
+  | Bitrate (kbps) | 8 | 16 | 24 | 32 | 40 | 48 | 56 | 64 | 72 | 80 | 88 | 96 |
+  | :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+  | Packet size (bytes) | 24 | 48 | 72 | 96 | 24 | 72 | 24 | 96 | 72 | 48 | 24 | 96 |
+
+  40, 56 and 88 kbps only fit 24-byte packets, so they spend more of the bitrate on packet headers. Prefer the other steps.
 - **EEP_B** protection requires a bitrate that is a multiple of 32 kbps, so use **EEP_A** for 8–24 kbps. The page warns you about this.
 
 By default the output file is **rewritten in place**, because ODR-DabMux keeps the file open and rewinds it at the end. *Settings → Output* can switch to atomic replace if your setup reopens the file.
@@ -203,6 +223,8 @@ journalctl -u odr-spi-generator -f
 | `/opt/odr-spi-generator` | Application and its Python virtualenv |
 | `/etc/odr-spi-generator/config.json` | Port, listen address, TLS, data directory |
 | `/var/lib/odr-spi-generator` | SQLite database, stored logos, EPG feed cache |
+| `/etc/odr-spi-generator/update.conf` | Git source (URL and branch) for one-click updates, recorded by the installer |
+| `/opt/odr-spi-generator/repo`, `/var/lib/odr-spi-generator-update` | Updater checkout, status and log |
 | *(your choice)* | The SPI output `.dat` file |
 
 ## Security
@@ -222,6 +244,18 @@ ODR_SPI_DATA_DIR=./data ODR_SPI_PORT=8090 .venv/bin/odr-spi-generator serve
 The original single-file script is kept in [`legacy/ODR-SPI-Generator.py`](legacy/ODR-SPI-Generator.py) for reference.
 
 ---
+
+### Credits
+
+The full list is also under *Settings → Credits*.
+
+- **Lucas Gallone**: the original [ODR-SPI-Generator](https://github.com/LucasGallone/ODR-SPI-Generator)
+- **Nick Piggott**: [odr-radiodns-bridge](https://github.com/nickpiggott/odr-radiodns-bridge)
+- **Opendigitalradio**: [ODR-mmbTools, python-dabmot, python-dabmsc](https://github.com/Opendigitalradio)
+- **Ben Poor (magicbadger)**: [python-hybridspi](https://github.com/magicbadger/python-hybridspi)
+- **Global Radio**: [python-mot-epg](https://github.com/GlobalRadio/python-mot-epg)
+- **KejPi**: [AbracaDABra](https://github.com/KejPi/AbracaDABra), used to verify decoding
+- **Rían Mac Fhionnghaile**: MPBNL SPI WebFrontend (web UI, EPG, multi-user service)
 
 ### License
 

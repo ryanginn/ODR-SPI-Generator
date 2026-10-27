@@ -154,6 +154,8 @@ DEFAULT_SETTINGS = {
         "protection": 3, "component_uid": "comp-spi",
     },
     "setup_complete": False,
+    "mux_name": "",
+    "dismissed_warnings": {},
 }
 
 _local = threading.local()

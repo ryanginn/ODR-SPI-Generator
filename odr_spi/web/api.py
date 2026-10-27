@@ -151,7 +151,14 @@ def state():
         version=__version__, setup_required=not users_exist(),
         user=_user_public(u) if u else None, csrf=u["csrf"] if u else None,
         setup_complete=bool(db.get_setting("setup_complete")),
+        mux_name=mux_display_name(),
     )
+
+
+def mux_display_name():
+    """Shown on the login screen, page title and sidebar. It names the
+    multiplex, which is public on air, so it is safe to show before login."""
+    return db.get_setting("mux_name") or (db.get_setting("ensemble") or {}).get("medium_name", "")
 
 
 @bp.post("/api/setup")
@@ -309,6 +316,44 @@ def _redact_builds(rows, u):
 def builds():
     rows = db.q("SELECT * FROM builds ORDER BY id DESC LIMIT 50")
     return jsonify(_redact_builds([_build_public(r) for r in rows], current_user()))
+
+
+@bp.post("/api/builds/<int:bid>/dismiss")
+@require("editor")
+def dismiss_warnings(bid):
+    """Dismiss one warning (or all) of a build; the same warning is hidden on
+    later builds too, so a known condition stops flagging the status."""
+    b = db.q1("SELECT * FROM builds WHERE id = ?", (bid,))
+    if not b:
+        raise ApiError("Build not found.", 404)
+    text = json_body().get("warning")
+    warnings = json.loads(b["warnings"])
+    stats = json.loads(b["stats"])
+    targets = warnings if text is None else [w for w in warnings if w == text]
+    if not targets:
+        raise ApiError("Warning not found.", 404)
+    dismissed = dict(db.get_setting("dismissed_warnings") or {})
+    for w in targets:
+        key = build.warning_key(w)
+        dismissed[key] = stats.get("cycle_seconds", 0) if key == build.SLOW_CYCLE else 1
+    if len(dismissed) > 1000:
+        raise ApiError("Too many dismissed warnings - restore them first.")
+    db.set_setting("dismissed_warnings", dismissed)
+    remaining = [w for w in warnings if w not in targets]
+    stats["dismissed_warnings"] = stats.get("dismissed_warnings", 0) + len(targets)
+    status = "ok" if b["status"] == "warning" and not remaining else b["status"]
+    db.x("UPDATE builds SET warnings = ?, stats = ?, status = ? WHERE id = ?",
+         (json.dumps(remaining), json.dumps(stats), status, bid))
+    audit("warnings.dismiss", str(bid), {"count": len(targets)})
+    return jsonify(ok=True)
+
+
+@bp.post("/api/warnings/restore")
+@require("editor")
+def restore_warnings():
+    db.set_setting("dismissed_warnings", {})
+    audit("warnings.restore")
+    return jsonify(ok=True)
 
 
 @bp.post("/api/apply")
@@ -672,8 +717,8 @@ def set_epg(sid):
     check_service_access(current_user(), sid)
     data = json_body()
     ftype = data.get("epg_feed_type", "xmltv")
-    if ftype not in ("xmltv", "spi"):
-        raise ApiError("Feed type must be XMLTV or SPI XML.")
+    if ftype not in ("xmltv", "spi", "mpbnl"):
+        raise ApiError("Feed type must be XMLTV, SPI XML or MPBNL.")
     url = _url(data.get("epg_feed_url"), "Feed URL")
     db.x("UPDATE services SET epg_enabled = ?, epg_feed_url = ?, epg_feed_type = ?, epg_feed_channel = ?, "
          "updated_at = ? WHERE id = ?",
@@ -849,7 +894,7 @@ def delete_user(uid):
 
 # --- settings -----------------------------------------------------------------------------
 
-SETTING_KEYS = ("output_path", "bitrate", "packet_address", "datagroup_mode", "write_mode", "refresh_mode",
+SETTING_KEYS = ("mux_name", "output_path", "bitrate", "packet_address", "datagroup_mode", "write_mode", "refresh_mode",
                 "refresh_time", "refresh_interval_hours", "epg_days", "timezone", "allow_private_urls",
                 "session_hours", "mux", "setup_complete")
 
@@ -874,9 +919,9 @@ def put_settings():
             raise ApiError(str(e))
         out["output_path"] = p
     if "bitrate" in data:
-        b = _int(data, "bitrate", 8, 32, "Bitrate")
+        b = _int(data, "bitrate", 8, 96, "Bitrate")
         if b not in build.BITRATES:
-            raise ApiError("Bitrate must be 8, 16, 24 or 32 kbps.")
+            raise ApiError("Bitrate must be a multiple of 8 kbps, from 8 to 96.")
         out["bitrate"] = b
     if "packet_address" in data:
         out["packet_address"] = _int(data, "packet_address", 1, 1023, "Packet address")
@@ -905,6 +950,8 @@ def put_settings():
         if not epg.valid_tz(tzn):
             raise ApiError("Unknown timezone (use e.g. Europe/Dublin).")
         out["timezone"] = tzn
+    if "mux_name" in data:
+        out["mux_name"] = _str(data, "mux_name", 64, False, "Multiplex name")
     if "session_hours" in data:
         out["session_hours"] = _int(data, "session_hours", 1, 168, "Session length")
     if "mux" in data:
@@ -1276,6 +1323,74 @@ def import_commit(iid):
                     build.refresh_logo(logo, allow)
         threading.Thread(target=fetch_all, daemon=True).start()
     return jsonify(created=created, updated=updated, fetching=len(url_logos))
+
+
+# --- one-click update (admin) -------------------------------------------------------------
+
+def _update_paths():
+    cfg = current_app.config["ODR_CFG"]
+    return {
+        "request": os.path.join(cfg["data_dir"], "update-request"),
+        "status": cfg.get("update_status", "/var/lib/odr-spi-generator-update/status.json"),
+        "conf": cfg.get("update_conf", "/etc/odr-spi-generator/update.conf"),
+        "commit": cfg.get("installed_commit", "/opt/odr-spi-generator/COMMIT"),
+    }
+
+
+def _read_small(path, limit=65536):
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def _update_info():
+    paths = _update_paths()
+    conf = {}
+    for line in (_read_small(paths["conf"]) or "").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            conf[k.strip()] = v.strip()
+    status = {}
+    try:
+        status = json.loads(_read_small(paths["status"]) or "{}")
+    except ValueError:
+        pass
+    source = re.sub(r"(://)[^/@]*@", r"\1", conf.get("REPO_URL", ""), count=1)  # hide embedded credentials
+    return {
+        "enabled": bool(conf.get("REPO_URL") and conf.get("BRANCH")),
+        "version": __version__,
+        "current_commit": (_read_small(paths["commit"]) or "").strip(),
+        "source": source, "branch": conf.get("BRANCH", ""),
+        "status": status if isinstance(status, dict) else {},
+        "pending": os.path.exists(paths["request"]),
+    }
+
+
+@bp.get("/api/update")
+@require("admin")
+def update_info():
+    return jsonify(_update_info())
+
+
+@bp.post("/api/update")
+@require("admin")
+def request_update():
+    action = json_body().get("action")
+    if action not in ("check", "apply"):
+        raise ApiError("Action must be check or apply.")
+    info = _update_info()
+    if not info["enabled"]:
+        raise ApiError("Updates are not configured - reinstall from a git checkout with install.sh.")
+    if info["status"].get("state") == "running" or info["pending"]:
+        raise ApiError("An update task is already running.", 409)
+    path = _update_paths()["request"]
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o640)
+    with os.fdopen(fd, "w") as f:
+        f.write(action)
+    audit("update." + action)
+    return jsonify(ok=True)
 
 
 # --- audit --------------------------------------------------------------------------------

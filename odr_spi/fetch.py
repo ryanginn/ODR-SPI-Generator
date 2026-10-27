@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlsplit
 
 from . import __version__
 
-USER_AGENT = f"ODR-SPI-Generator/{__version__}"
+USER_AGENT = f"MPBNL-SPI-WebFrontend/{__version__}"
 TIMEOUT = 15
 MAX_REDIRECTS = 4
 

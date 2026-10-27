@@ -16,11 +16,11 @@ LEGACY_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 <serviceInformation xmlns="http://www.worlddab.org/schemas/spi/31" creationTime="2014-06-13T10:32:41+01:00">
   <services id="e32ea1">
     <service>
-      <shortName>MPB R1</shortName>
-      <mediumName>MPB Radio 1</mediumName>
+      <shortName>Demo R1</shortName>
+      <mediumName>Demo Radio 1</mediumName>
       <mediaDescription><multimedia url="radio1_32x32.png" mimeValue="image/png" width="32" height="32"/></mediaDescription>
       <mediaDescription><multimedia url="../../etc/passwd" mimeValue="image/png" width="32" height="32"/></mediaDescription>
-      <mediaDescription><shortDescription>Mayo's No.1 Hit Music Station</shortDescription></mediaDescription>
+      <mediaDescription><shortDescription>Number one for hits</shortDescription></mediaDescription>
       <genre href="urn:tva:metadata:cs:ContentCS:2002:10" type="rds_pty">Pop</genre>
       <genre href="urn:tva:metadata:cs:ContentCS:2002:3.6.8" type="other">Dance</genre>
       <bearer id="dab:2e3.2ea1.2491.0" cost="10"/>
@@ -100,8 +100,8 @@ class ApiTest(unittest.TestCase):
         st, body = self.call("put", "/api/settings", {"output_path": os.path.join(out, "spi.dat"), "bitrate": 16,
                                                       "epg_days": 2})
         self.assertEqual(st, 200, body)
-        st, body = self.call("put", "/api/ensemble", {"ecc": "e3", "eid": "2ea1", "short_name": "MPB",
-                                                      "medium_name": "MPB DAB"})
+        st, body = self.call("put", "/api/ensemble", {"ecc": "e3", "eid": "2ea1", "short_name": "DEMO",
+                                                      "medium_name": "Demo DAB"})
         self.assertEqual(st, 200, body)
 
         # legacy import with a local folder upload
@@ -120,7 +120,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual((st, res["created"]), (200, 2), res)
 
         services = self.call("get", "/api/services")[1]
-        r1 = next(s for s in services if s["short_name"] == "MPB R1")
+        r1 = next(s for s in services if s["short_name"] == "Demo R1")
         self.assertEqual(r1["genres"], ["urn:tva:metadata:cs:ContentCS:2002:3.6.8"])
         self.assertEqual(len(r1["logos"]), 1)
 
@@ -207,6 +207,81 @@ class ApiTest(unittest.TestCase):
         st, body = self.call("put", "/api/settings", {"output_path": os.path.join(self.dir, "link.dat")})
         self.assertEqual(st, 400)
         self.assertIn("symlink", body["error"])
+
+    def test_update_requests(self):
+        self.login_admin()
+        cfg = self.app.config["ODR_CFG"]
+        cfg.update(update_conf=os.path.join(self.dir, "update.conf"), installed_commit=os.path.join(self.dir, "COMMIT"),
+                   update_status=os.path.join(self.dir, "status.json"))
+        st, body = self.call("post", "/api/update", {"action": "apply"})
+        self.assertEqual(st, 400)  # not installed from git
+        with open(cfg["update_conf"], "w") as f:
+            f.write("REPO_URL=https://user:secret@example.com/owner/repo.git\nBRANCH=main\n")
+        with open(cfg["installed_commit"], "w") as f:
+            f.write("abc1234def\n")
+        info = self.call("get", "/api/update")[1]
+        self.assertTrue(info["enabled"])
+        self.assertEqual(info["source"], "https://example.com/owner/repo.git")
+        self.assertEqual(info["current_commit"], "abc1234def")
+        st, _ = self.call("post", "/api/update", {"action": "rm -rf /"})
+        self.assertEqual(st, 400)
+        st, _ = self.call("post", "/api/update", {"action": "check"})
+        self.assertEqual(st, 200)
+        with open(os.path.join(cfg["data_dir"], "update-request")) as f:
+            self.assertEqual(f.read(), "check")
+        st, _ = self.call("post", "/api/update", {"action": "apply"})
+        self.assertEqual(st, 409)  # previous request not picked up yet
+        # editors cannot trigger updates
+        self.call("post", "/api/users", {"username": "ed1", "role": "editor", "password": "editor password 1"})
+        ec = self.app.test_client()
+        self.call("post", "/api/login", {"username": "ed1", "password": "editor password 1"}, client=ec, csrf="")
+        ecsrf = self.call("get", "/api/state", client=ec, csrf="")[1]["csrf"]
+        self.call("post", "/api/account/password", {"current": "editor password 1", "new": "editor password 2"},
+                  client=ec, csrf=ecsrf)
+        self.assertEqual(self.call("get", "/api/services", client=ec, csrf=ecsrf)[0], 200)
+        st, body = self.call("get", "/api/update", client=ec, csrf=ecsrf)
+        self.assertEqual((st, body["error"]), (403, "Administrator access required."))
+
+    def test_bitrates_and_mux_name(self):
+        self.assertEqual({k: build.packet_size_for(k) for k in (8, 16, 24, 32, 48, 64, 96)},
+                         {8: 24, 16: 48, 24: 72, 32: 96, 48: 72, 64: 96, 96: 96})
+        self.login_admin()
+        self.assertEqual(self.call("put", "/api/settings", {"bitrate": 64})[0], 200)
+        self.assertEqual(self.call("put", "/api/settings", {"bitrate": 100})[0], 400)
+        self.assertEqual(self.call("put", "/api/settings", {"bitrate": 60})[0], 400)
+        self.call("put", "/api/ensemble", {"ecc": "e1", "eid": "c0de", "short_name": "Demo", "medium_name": "Demo Mux"})
+        anon = self.app.test_client()
+        self.assertEqual(self.call("get", "/api/state", client=anon, csrf="")[1]["mux_name"], "Demo Mux")
+        self.call("put", "/api/settings", {"mux_name": "Region North"})
+        self.assertEqual(self.call("get", "/api/state", client=anon, csrf="")[1]["mux_name"], "Region North")
+
+    def test_warning_dismissal(self):
+        self.login_admin()
+        out = os.path.join(self.dir, "spi.dat")
+        self.call("put", "/api/settings", {"output_path": out})
+        self.call("put", "/api/ensemble", {"ecc": "e1", "eid": "c0de", "short_name": "Demo", "medium_name": "Demo Mux"})
+        self.call("post", "/api/services", {"medium_name": "No SId", "short_name": "NoSId"})
+        bid = build.run("test", None, apply_changes=True, refresh=False)
+        st = self.call("get", "/api/status")[1]["build"]
+        self.assertEqual(st["status"], "warning")
+        self.assertEqual(len(st["warnings"]), 1)
+        self.assertEqual(self.call("post", f"/api/builds/{bid}/dismiss", {"warning": st["warnings"][0]})[0], 200)
+        st = self.call("get", "/api/status")[1]["build"]
+        self.assertEqual((st["status"], st["warnings"]), ("ok", []))
+        build.run("test", None, refresh=False)  # the same warning stays hidden on later builds
+        st = self.call("get", "/api/status")[1]["build"]
+        self.assertEqual((st["status"], st["stats"]["dismissed_warnings"]), ("ok", 1))
+        self.call("post", "/api/warnings/restore", {})
+        build.run("test", None, refresh=False)
+        self.assertEqual(self.call("get", "/api/status")[1]["build"]["status"], "warning")
+
+    def test_slow_cycle_dismissal_returns_when_much_slower(self):
+        w = build.warning_key("Carousel takes 8 min 19 s to cycle at 32 kbps - consider ...")
+        self.assertEqual(w, build.SLOW_CYCLE)
+        db.set_setting("dismissed_warnings", {build.SLOW_CYCLE: 499})
+        text = ["Carousel takes 9 min 0 s to cycle at 32 kbps"]
+        self.assertEqual(build.split_dismissed(text, {"cycle_seconds": 540}), ([], text))
+        self.assertEqual(build.split_dismissed(text, {"cycle_seconds": 700}), (text, []))
 
     def test_login_lockout(self):
         self.login_admin()

@@ -1,5 +1,5 @@
 [Unit]
-Description=ODR SPI Generator - DAB+ SPI/EPG carousel with web UI
+Description=MPBNL SPI WebFrontend - DAB+ SPI/EPG carousel with web UI
 Documentation=https://github.com/ryanginn/ODR-SPI-Generator
 After=network-online.target
 Wants=network-online.target

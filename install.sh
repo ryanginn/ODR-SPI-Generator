@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ODR SPI Generator installer.
+# MPBNL SPI WebFrontend installer.
 #
 #   sudo ./install.sh                 interactive install / upgrade
 #   sudo ./install.sh --yes           accept defaults
@@ -48,9 +48,9 @@ ask() { # ask "question" default -> echoes answer
 
 [ "$(id -u)" = 0 ] || die "run as root: sudo $0"
 command -v systemctl >/dev/null || die "systemd is required"
-[ -f "$SRC/odr_spi/__init__.py" ] || die "run this script from the ODR-SPI-Generator source directory"
+[ -f "$SRC/odr_spi/__init__.py" ] || die "run this script from the source directory (the git checkout)"
 
-bold "ODR SPI Generator installer"
+bold "MPBNL SPI WebFrontend installer"
 UPGRADE=0
 [ -f "$CONF" ] && UPGRADE=1 && info "Existing installation found - upgrading (config and data are kept)."
 
@@ -60,7 +60,7 @@ if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
     apt-get install -y -qq python3 python3-venv python3-pip python3-pil python3-defusedxml \
-        tzdata ca-certificates curl >/dev/null
+        tzdata ca-certificates curl git >/dev/null
     ok "System packages installed"
 else
     warn "Not a Debian/Ubuntu system - make sure python3 (>= 3.9) with venv, Pillow build deps and curl are installed."
@@ -105,9 +105,16 @@ if [ ! -x "$PREFIX/venv/bin/python" ]; then
 fi
 "$PREFIX/venv/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
 "$PREFIX/venv/bin/pip" install -q "$PREFIX/src" || die "pip install failed"
+# record the installed commit and, for git checkouts, where updates come from
+srcgit() { git -c safe.directory="$SRC" -C "$SRC" "$@"; }  # SRC may belong to another user
+COMMIT=unknown
+if srcgit rev-parse HEAD >/dev/null 2>&1; then
+    COMMIT=$(srcgit rev-parse HEAD)
+fi
+echo "$COMMIT" > "$PREFIX/COMMIT"
 chown -R root:root "$PREFIX"
 chmod -R go-w "$PREFIX"
-ok "Application installed"
+ok "Application installed (${COMMIT:0:7})"
 
 cat > "$WRAPPER" <<EOF
 #!/bin/sh
@@ -141,6 +148,23 @@ mkdir -p "$DATA"
 chown -R "$RUN_USER:$RUN_GROUP" "$DATA"
 chmod 750 "$DATA"
 
+# one-click updates: the web UI drops a request file, a root-only path unit runs
+# the updater against the git source recorded here (never anything from the UI)
+REPO_URL=$(srcgit remote get-url origin 2>/dev/null || true)
+BRANCH=$(srcgit rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+if [ -n "$REPO_URL" ] && [ -n "$BRANCH" ] && [ "$BRANCH" != HEAD ]; then
+    printf 'REPO_URL=%s\nBRANCH=%s\n' "$REPO_URL" "$BRANCH" > "$CONF_DIR/update.conf"
+    chown root:"$RUN_GROUP" "$CONF_DIR/update.conf"
+    chmod 640 "$CONF_DIR/update.conf"
+    ok "Updates from $BRANCH of ${REPO_URL##*@}"
+else
+    warn "Not installed from a git checkout - one-click updates are disabled."
+fi
+install -d -m 2750 -o root -g "$RUN_GROUP" "/var/lib/$APP-update"
+install -m 755 "$SRC/packaging/$APP-update.sh" "/usr/local/sbin/$APP-update"
+install -m 644 "$SRC/packaging/$APP-update.service" "/etc/systemd/system/$APP-update.service"
+install -m 644 "$SRC/packaging/$APP-update.path" "/etc/systemd/system/$APP-update.path"
+
 # ---------------------------------------------------------------- systemd
 CAPS=""
 [ "$PORT" -lt 1024 ] && CAPS="CAP_NET_BIND_SERVICE"
@@ -149,6 +173,7 @@ sed -e "s/@USER@/$RUN_USER/" -e "s/@GROUP@/$RUN_GROUP/" -e "s/@CAPS@/$CAPS/" \
 chmod 644 "$UNIT"
 systemctl daemon-reload
 systemctl enable "$APP" >/dev/null 2>&1
+systemctl enable --now "$APP-update.path" >/dev/null 2>&1
 systemctl restart "$APP"
 
 info "Waiting for the service to start…"

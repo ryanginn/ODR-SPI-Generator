@@ -73,10 +73,10 @@ class CrcTest(unittest.TestCase):
 class SiTest(unittest.TestCase):
     def test_si_matches_legacy_builder(self):
         media = [("1", "image/png", 32, 32), ("2", "image/png", 320, 240)]
-        services = [("MPB R1", "MPB Radio 1", 0xE3, 0x2491, media), ("Ri Ra", "Raidio Ri Ra", 0xE2, 0x2493, [])]
-        expected = original_si(0xE3, 0x2EA1, "MPB DAB", "MPB", services, [("3", "image/jpeg", 32, 32)])
+        services = [("Demo R1", "Demo Radio 1", 0xE3, 0x2491, media), ("Ri Ra", "Raidio Ri Ra", 0xE2, 0x2493, [])]
+        expected = original_si(0xE3, 0x2EA1, "Demo DAB", "DEMO", services, [("3", "image/jpeg", 32, 32)])
         got = spi_binary.service_information(
-            {"ecc": 0xE3, "eid": 0x2EA1, "short_name": "MPB", "medium_name": "MPB DAB",
+            {"ecc": 0xE3, "eid": 0x2EA1, "short_name": "DEMO", "medium_name": "Demo DAB",
              "media": [("3", "image/jpeg", 32, 32)]},
             [{"short_name": sh, "medium_name": md, "bearers": [(ecc, 0x2EA1, sid, 0)], "media": ms}
              for sh, md, ecc, sid, ms in services])
