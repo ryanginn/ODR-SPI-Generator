@@ -187,11 +187,13 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(stats["services"], 2)
         self.assertEqual(stats["epg_objects"], 2)
         self.assertEqual(stats["payload_bytes"] + stats["overhead_bytes"], stats["stream_bytes"])
-        self.assertLess(stats["overhead_bytes"], stats["payload_bytes"] * 0.25)  # one pass, not a repeated carousel
         data = open(os.path.join(out, "spi.dat"), "rb").read()
         self.assertEqual(len(data), stats["stream_bytes"])
-        from tests.test_encoder_roundtrip import decode_packets
-        self.assertTrue(decode_packets(data, 48))
+        from tests.test_encoder_roundtrip import decode_packets, parse_datagroup
+        groups = decode_packets(data, 48)
+        # exactly one pass of the carousel: the MOT directory starts once
+        starts = [g for g in groups if parse_datagroup(g)[0] == 6 and parse_datagroup(g)[2] == 0]
+        self.assertEqual(len(starts), 1)
 
         # build details (paths, other stations' warnings) are hidden from station owners
         st_owner = self.call("get", "/api/status", client=oc, csrf=ocsrf)[1]
