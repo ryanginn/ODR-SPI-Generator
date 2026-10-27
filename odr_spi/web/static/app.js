@@ -405,9 +405,14 @@ async function boot() {
 }
 
 function renderFatal() {
-  const app = clear(document.getElementById("app"));
-  app.appendChild(h("div", { class: "auth" }, h("div", { class: "auth-card" }, brand(), h("p", null, "Cannot reach the MPBNL SPI WebFrontend service."),
-    btn("Retry", { cls: "primary", onclick: boot }))));
+  const cmds = "sudo systemctl status odr-spi-generator --no-pager\n" +
+    "sudo journalctl -u odr-spi-generator -n 50 --no-pager\n" +
+    "sudo journalctl -u odr-spi-generator-update -n 50 --no-pager";
+  authCard(h("div", { class: "stack" }, h("h1", null, "Cannot reach the server"),
+    h("p", { class: "lead" }, "The MPBNL SPI WebFrontend service isn't responding. If an update is installing, give it a minute and retry. Otherwise, check the service on the server:"),
+    codeBlock(cmds),
+    h("p", { class: "small muted" }, "To start it again: sudo systemctl start odr-spi-generator. The SPI output file keeps broadcasting either way."),
+    btn("Retry", { cls: "primary block", icon: "refresh", onclick: boot })), true);
 }
 
 function brand() {

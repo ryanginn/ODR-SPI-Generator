@@ -93,8 +93,19 @@ fi
 RUN_GROUP=$(id -gn "$RUN_USER")
 
 # ---------------------------------------------------------------- code
+# The running service is left up while the new code is installed and only
+# restarted at the end; if anything fails, make sure it is running again
+# (one-click updates run this unattended, so nobody would notice otherwise).
+on_exit() {
+    local rc=$?
+    if [ "$rc" -ne 0 ] && [ -f "$UNIT" ] && ! systemctl is-active --quiet "$APP"; then
+        warn "Installation failed - starting $APP again"
+        systemctl start "$APP" 2>/dev/null || true
+    fi
+}
+trap on_exit EXIT
+
 info "Installing application to $PREFIX…"
-systemctl stop "$APP" 2>/dev/null || true
 mkdir -p "$PREFIX"
 rm -rf "$PREFIX/src"
 mkdir -p "$PREFIX/src"
