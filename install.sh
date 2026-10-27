@@ -7,6 +7,9 @@
 #
 # Re-running the installer upgrades the code and keeps config and data.
 set -euo pipefail
+# installed files must be readable by the unprivileged service user, whatever
+# umask the caller has (the one-click updater runs with 027)
+umask 022
 
 APP=odr-spi-generator
 PREFIX=/opt/$APP
@@ -124,7 +127,12 @@ if srcgit rev-parse HEAD >/dev/null 2>&1; then
 fi
 echo "$COMMIT" > "$PREFIX/COMMIT"
 chown -R root:root "$PREFIX"
-chmod -R go-w "$PREFIX"
+# readable (not writable) by the service user; this also repairs installs
+# made with a restrictive umask, which pip would otherwise keep
+chmod 755 "$PREFIX"
+chmod -R u=rwX,go=rX "$PREFIX/venv" "$PREFIX/src"
+chmod 644 "$PREFIX/COMMIT"
+[ -d "$PREFIX/repo" ] && chmod 700 "$PREFIX/repo"   # updater checkout: root only
 ok "Application installed (${COMMIT:0:7})"
 
 cat > "$WRAPPER" <<EOF
@@ -188,10 +196,20 @@ systemctl enable --now "$APP-update.path" >/dev/null 2>&1
 systemctl restart "$APP"
 
 info "Waiting for the service to start…"
+responds() {
+    curl -fsS "http://127.0.0.1:$PORT/api/state" >/dev/null 2>&1 \
+        || curl -fsSk "https://127.0.0.1:$PORT/api/state" >/dev/null 2>&1
+}
+main_pid() { systemctl show -p MainPID --value "$APP" 2>/dev/null; }
+# healthy = active and answering, and still the same process a few seconds
+# later (a crash-looping service can be briefly "active" between restarts)
 for _ in $(seq 1 30); do
-    if curl -fsS "http://127.0.0.1:$PORT/api/state" >/dev/null 2>&1 \
-        || curl -fsSk "https://127.0.0.1:$PORT/api/state" >/dev/null 2>&1; then
-        STARTED=1; break
+    if systemctl is-active --quiet "$APP" && responds; then
+        PID=$(main_pid)
+        sleep 3
+        if systemctl is-active --quiet "$APP" && [ "$(main_pid)" = "$PID" ] && responds; then
+            STARTED=1; break
+        fi
     fi
     sleep 1
 done
