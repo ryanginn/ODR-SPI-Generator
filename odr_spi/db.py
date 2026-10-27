@@ -101,6 +101,15 @@ CREATE TABLE IF NOT EXISTS programmes (
     updated_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS feed_templates (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    definition TEXT NOT NULL,
+    sample INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY,
     created_at REAL NOT NULL,
@@ -170,6 +179,13 @@ def init(data_dir):
     c.executescript(SCHEMA)
     for k, v in DEFAULT_SETTINGS.items():
         c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, json.dumps(v)))
+    if get_meta("templates_seeded") is None:
+        seed_sample_templates()
+        set_meta("templates_seeded", 1)
+    # feeds created before templates existed used the built-in "mpbnl" type
+    mpbnl = q1("SELECT id FROM feed_templates WHERE name = 'MPBNL'")
+    if mpbnl:
+        x("UPDATE services SET epg_feed_type = ? WHERE epg_feed_type = 'mpbnl'", (f"tpl:{mpbnl['id']}",))
     c.commit()
     try:
         os.chmod(_path, 0o600)
@@ -210,6 +226,18 @@ class transaction:
     def __exit__(self, exc_type, *_):
         conn().execute("ROLLBACK" if exc_type else "COMMIT")
         return False
+
+
+def seed_sample_templates():
+    """Add any sample templates that are missing (matched by name)."""
+    from .feed_templates import SAMPLES
+    added = 0
+    for t in SAMPLES:
+        if not q1("SELECT id FROM feed_templates WHERE name = ?", (t["name"],)):
+            x("INSERT INTO feed_templates(name, definition, sample, created_at, updated_at) VALUES (?,?,1,?,?)",
+              (t["name"], json.dumps(t), time.time(), time.time()))
+            added += 1
+    return added
 
 
 def get_setting(key):

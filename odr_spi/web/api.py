@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Blueprint, current_app, g, jsonify, make_response, request, send_file
 
-from .. import __version__, build, db, epg, fetch, importers, media, scheduler, security
+from .. import __version__, build, db, epg, feed_templates, fetch, importers, media, scheduler, security
 from ..encoder import spi_binary
 from . import (ALL_SERVICE_FIELDS, COOKIE, STATION_FIELDS, ApiError, allowed_service_ids, audit, can_apply,
                check_service_access, client_ip, current_user, is_editor, json_body, require)
@@ -717,8 +717,13 @@ def set_epg(sid):
     check_service_access(current_user(), sid)
     data = json_body()
     ftype = data.get("epg_feed_type", "xmltv")
-    if ftype not in ("xmltv", "spi", "mpbnl"):
-        raise ApiError("Feed type must be XMLTV, SPI XML or MPBNL.")
+    if not isinstance(ftype, str):
+        raise ApiError("Invalid feed type.")
+    if ftype.startswith("tpl:"):
+        if not ftype[4:].isdigit() or not db.q1("SELECT id FROM feed_templates WHERE id = ?", (int(ftype[4:]),)):
+            raise ApiError("That API template no longer exists.")
+    elif ftype not in ("xmltv", "spi"):
+        raise ApiError("Feed type must be XMLTV, SPI XML or an API template.")
     url = _url(data.get("epg_feed_url"), "Feed URL")
     db.x("UPDATE services SET epg_enabled = ?, epg_feed_url = ?, epg_feed_type = ?, epg_feed_channel = ?, "
          "updated_at = ? WHERE id = ?",
@@ -1323,6 +1328,106 @@ def import_commit(iid):
                     build.refresh_logo(logo, allow)
         threading.Thread(target=fetch_all, daemon=True).start()
     return jsonify(created=created, updated=updated, fetching=len(url_logos))
+
+
+# --- EPG API templates --------------------------------------------------------------------
+
+def _template_row(r, usage):
+    return {"id": r["id"], "name": r["name"], "sample": bool(r["sample"]), "updated_at": r["updated_at"],
+            "definition": json.loads(r["definition"]), "used_by": usage.get(f"tpl:{r['id']}", 0)}
+
+
+def _template_body():
+    data = json_body()
+    try:
+        return feed_templates.validate(data.get("definition"))
+    except feed_templates.TemplateError as e:
+        raise ApiError(f"Template: {e}")
+
+
+@bp.get("/api/feed-templates")
+@require()
+def list_templates():
+    usage = {r["epg_feed_type"]: r["n"] for r in
+             db.q("SELECT epg_feed_type, COUNT(*) AS n FROM services GROUP BY epg_feed_type")}
+    rows = db.q("SELECT * FROM feed_templates ORDER BY name COLLATE NOCASE")
+    return jsonify([_template_row(r, usage) for r in rows])
+
+
+@bp.post("/api/feed-templates")
+@require("editor")
+def create_template():
+    t = _template_body()
+    if db.q1("SELECT id FROM feed_templates WHERE name = ?", (t["name"],)):
+        raise ApiError("A template with that name already exists.")
+    if db.q1("SELECT COUNT(*) AS n FROM feed_templates")["n"] >= 200:
+        raise ApiError("Too many templates.")
+    tid = db.x("INSERT INTO feed_templates(name, definition, sample, created_at, updated_at) VALUES (?,?,0,?,?)",
+               (t["name"], json.dumps(t), time.time(), time.time())).lastrowid
+    audit("template.create", t["name"])
+    return jsonify(id=tid)
+
+
+@bp.put("/api/feed-templates/<int:tid>")
+@require("editor")
+def update_template(tid):
+    if not db.q1("SELECT id FROM feed_templates WHERE id = ?", (tid,)):
+        raise ApiError("Template not found.", 404)
+    t = _template_body()
+    if db.q1("SELECT id FROM feed_templates WHERE name = ? AND id != ?", (t["name"], tid)):
+        raise ApiError("A template with that name already exists.")
+    db.x("UPDATE feed_templates SET name = ?, definition = ?, updated_at = ? WHERE id = ?",
+         (t["name"], json.dumps(t), time.time(), tid))
+    audit("template.update", t["name"])
+    return jsonify(ok=True)
+
+
+@bp.delete("/api/feed-templates/<int:tid>")
+@require("editor")
+def delete_template(tid):
+    r = db.q1("SELECT * FROM feed_templates WHERE id = ?", (tid,))
+    if not r:
+        raise ApiError("Template not found.", 404)
+    n = db.q1("SELECT COUNT(*) AS n FROM services WHERE epg_feed_type = ?", (f"tpl:{tid}",))["n"]
+    if n:
+        raise ApiError(f"{n} station(s) use this template - switch them to another format first.")
+    db.x("DELETE FROM feed_templates WHERE id = ?", (tid,))
+    audit("template.delete", r["name"])
+    return jsonify(ok=True)
+
+
+@bp.post("/api/feed-templates/restore-samples")
+@require("editor")
+def restore_templates():
+    added = db.seed_sample_templates()
+    audit("template.restore_samples", "", {"added": added})
+    return jsonify(added=added)
+
+
+@bp.post("/api/feed-templates/test")
+@require("editor")
+def test_template():
+    t = _template_body()
+    url = _url(json_body().get("url"), "Test URL")
+    if not url:
+        raise ApiError("Enter a URL to test with.")
+    allow = bool(db.get_setting("allow_private_urls"))
+    requests = []
+
+    def fetcher(u):
+        requests.append(u)
+        return fetch.fetch(u, allow_private=allow, max_bytes=5 * 1024 * 1024, accept="application/json")[0]
+    tz = epg.get_tz(db.get_setting("timezone"))
+    try:
+        progs = feed_templates.run(t, url, 7, tz, fetcher)
+    except fetch.FetchError as e:
+        raise ApiError(f"Fetch failed: {e}")
+    except feed_templates.TemplateError as e:
+        raise ApiError(str(e))
+    audit("template.test", t["name"], {"url": url})
+    return jsonify(count=len(progs), requests=requests[:14], timezone=str(tz), programmes=[
+        {"start": p["start"], "end": p["end"], "title": p["title"], "description": p["description"][:200]}
+        for p in progs[:60]])
 
 
 # --- one-click update (admin) -------------------------------------------------------------

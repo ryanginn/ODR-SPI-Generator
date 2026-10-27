@@ -11,7 +11,7 @@ import time
 import zlib
 from datetime import datetime, timedelta, timezone
 
-from . import db, epg, fetch, media
+from . import db, epg, feed_templates, fetch, media
 from .encoder import mot, msc, spi_binary
 
 log = logging.getLogger("odr_spi.build")
@@ -144,11 +144,16 @@ def refresh_logo(logo, allow_private):
 def refresh_feed(service, allow_private):
     now = time.time()
     try:
-        if service["epg_feed_type"] == "mpbnl":
+        if service["epg_feed_type"].startswith("tpl:"):
+            row = db.q1("SELECT definition FROM feed_templates WHERE id = ?",
+                        (int(service["epg_feed_type"][4:]),))
+            if not row:
+                raise feed_templates.TemplateError("the feed's API template has been deleted")
             days = max(7, int(db.get_setting("epg_days") or 0))
-            progs = epg.fetch_mpbnl(
-                service["epg_feed_url"], days, epg.get_tz(db.get_setting("timezone")),
-                lambda u: fetch.fetch(u, allow_private=allow_private, max_bytes=2 * 1024 * 1024,
+            progs = feed_templates.run(
+                feed_templates.validate(json.loads(row["definition"])), service["epg_feed_url"], days,
+                epg.get_tz(db.get_setting("timezone")),
+                lambda u: fetch.fetch(u, allow_private=allow_private, max_bytes=5 * 1024 * 1024,
                                       accept="application/json")[0])
         else:
             data, _, _ = fetch.fetch(service["epg_feed_url"], allow_private=allow_private,
