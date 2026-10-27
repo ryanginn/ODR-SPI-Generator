@@ -164,6 +164,7 @@ DEFAULT_SETTINGS = {
     },
     "setup_complete": False,
     "mux_name": "",
+    "optimise_logos": True,
     "dismissed_warnings": {},
 }
 

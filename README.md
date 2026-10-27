@@ -134,6 +134,10 @@ Per station, under **EPG**:
 
 Merge mode updates stations that share the same primary SId and adds the rest. You can also add everything as new, or replace all stations.
 
+### Carousel size
+
+The Activity page shows the length of one pass of the carousel at your bitrate, split into logos, EPG, service information and packet headers, and names the largest logos. *Settings → Carousel → Compress logos for broadcast* (on by default) sends a 256-colour PNG or JPEG copy of each logo when that is at least 10% smaller. Your uploads aren't changed. Photo-like logos typically shrink 5–10×, so large 600×600 and 320×240 PNGs are the first place to look if the cycle is long.
+
 ### Warnings
 
 The Activity page lists each build's warnings, such as a logo URL that can't be reached or a carousel that takes over 5 minutes to cycle. **Dismiss** hides a known warning on later builds too, so the status goes back to green. A dismissed slow-carousel warning comes back if the cycle grows more than 25% beyond what you dismissed. *Show them again* restores all dismissed warnings.

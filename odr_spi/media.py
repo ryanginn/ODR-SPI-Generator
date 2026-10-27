@@ -88,6 +88,44 @@ def _fit(img, width, height, fmt):
     return canvas if fmt == "PNG" else canvas.convert("RGB")
 
 
+_broadcast_cache = {}
+
+
+def broadcast_variant(name: str, mime: str):
+    """A smaller copy of a stored logo for the carousel: a 256-colour PNG, or a
+    JPEG when the image has no transparency, whichever is smallest. Used only
+    if it saves at least 10%; the stored original is never changed.
+    Returns (bytes, mime)."""
+    key = (name, mime)
+    if key in _broadcast_cache:
+        return _broadcast_cache[key]
+    original = read(name)
+    best = (original, mime)
+    try:
+        img = Image.open(io.BytesIO(original))
+        img.load()
+        rgba = img.convert("RGBA")
+        opaque = rgba.getextrema()[3][0] == 255
+        candidates = []
+        out = io.BytesIO()
+        # method 2 = fast octree, the only quantizer that keeps an alpha channel
+        (rgba.quantize(256, method=2) if not opaque else rgba.convert("RGB").quantize(256)).save(out, "PNG", optimize=True)
+        candidates.append((out.getvalue(), "image/png"))
+        if opaque:
+            out = io.BytesIO()
+            rgba.convert("RGB").save(out, "JPEG", quality=85, optimize=True, progressive=False)
+            candidates.append((out.getvalue(), "image/jpeg"))
+        for data, m in candidates:
+            if len(data) < len(best[0]) * 0.9:
+                best = (data, m)
+    except Exception:
+        pass  # keep the original if anything about re-encoding fails
+    if len(_broadcast_cache) > 2000:
+        _broadcast_cache.clear()
+    _broadcast_cache[key] = best
+    return best
+
+
 def store(data: bytes, mime: str) -> str:
     name = hashlib.sha256(data).hexdigest() + "." + EXT_BY_MIME[mime]
     path = os.path.join(_media_dir, name)

@@ -1,7 +1,8 @@
 """MSC datagroups (directory mode) and packet mode encoding.
 
-Output is byte-identical to python-dabmsc's encode_directorymode() and
-encode_packets(padding=True) for the same transport IDs.
+Datagroups are byte-identical to python-dabmsc's encode_directorymode() for
+the same transport IDs. Packets match its encode_packets() except that one
+pass of the carousel is written instead of repeating it up to four times.
 """
 
 from .crc import crc16
@@ -91,22 +92,42 @@ def _required_size(n, max_size):
     return 96
 
 
+def _split(data, pieces, chunk):
+    """Split data into `pieces` parts of at most `chunk` bytes, as evenly as possible."""
+    base, extra = divmod(len(data), pieces)
+    out, pos = [], 0
+    for n in range(pieces):
+        size = base + (1 if n < extra else 0)
+        out.append(data[pos:pos + size])
+        pos += size
+    assert all(0 < len(p) <= chunk for p in out)
+    return out
+
+
 def encode_packets(groups, address=1, size=96):
+    """One pass of the carousel as packets.
+
+    The multiplexer loops the file, so the packet count is made a multiple of
+    four: the continuity index then ends on 3 and carries on from 0 without a
+    break. Rather than repeating the whole carousel (up to 4x the size, as
+    python-dabmsc does), the last datagroup is spread over 1-3 extra packets."""
     if not 1 <= address <= 1023:
         raise ValueError("packet address must be between 1 and 1023")
     if size not in PACKET_SIZES:
         raise ValueError("packet size must be one of %s" % (PACKET_SIZES,))
+    if not groups:
+        return []
     chunk = size - 5
-    index = -1
+    plans = [[dg[i:i + chunk] for i in range(0, len(dg), chunk)] for dg in groups]
+    total = sum(len(p) for p in plans)
+    extra = -total % 4
+    if extra:
+        last = groups[-1]
+        plans[-1] = _split(last, len(plans[-1]) + extra, chunk)
     out = []
-    # repeat the datagroup sequence until the continuity index ends on 3, so
-    # the file can be looped by the multiplexer without a continuity break
-    while True:
-        for dg in groups:
-            for i in range(0, len(dg), chunk):
-                part = dg[i:i + chunk]
-                index = (index + 1) % 4
-                out.append(_packet(_required_size(len(part), size), address, part,
-                                   i == 0, i + chunk >= len(dg), index))
-        if index == 3 or not groups:
-            return out
+    index = -1
+    for parts in plans:
+        for n, part in enumerate(parts):
+            index = (index + 1) % 4
+            out.append(_packet(_required_size(len(part), size), address, part, n == 0, n == len(parts) - 1, index))
+    return out

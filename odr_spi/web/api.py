@@ -899,7 +899,7 @@ def delete_user(uid):
 
 # --- settings -----------------------------------------------------------------------------
 
-SETTING_KEYS = ("mux_name", "output_path", "bitrate", "packet_address", "datagroup_mode", "write_mode", "refresh_mode",
+SETTING_KEYS = ("mux_name", "optimise_logos", "output_path", "bitrate", "packet_address", "datagroup_mode", "write_mode", "refresh_mode",
                 "refresh_time", "refresh_interval_hours", "epg_days", "timezone", "allow_private_urls",
                 "session_hours", "mux", "setup_complete")
 
@@ -930,7 +930,7 @@ def put_settings():
         out["bitrate"] = b
     if "packet_address" in data:
         out["packet_address"] = _int(data, "packet_address", 1, 1023, "Packet address")
-    for k in ("datagroup_mode", "allow_private_urls", "setup_complete"):
+    for k in ("datagroup_mode", "allow_private_urls", "setup_complete", "optimise_logos"):
         if k in data:
             out[k] = bool(data[k])
     if "write_mode" in data:
@@ -963,7 +963,7 @@ def put_settings():
         out["mux"] = _mux_fields(data["mux"])
     for k, v in out.items():
         db.set_setting(k, v)
-    if set(out) & {"output_path", "bitrate", "packet_address", "datagroup_mode", "write_mode", "epg_days",
+    if set(out) & {"output_path", "bitrate", "packet_address", "datagroup_mode", "write_mode", "epg_days", "optimise_logos",
                    "timezone"}:
         db.mark_dirty()
     scheduler.wake()

@@ -186,6 +186,8 @@ class ApiTest(unittest.TestCase):
         stats = json.loads(b["stats"])
         self.assertEqual(stats["services"], 2)
         self.assertEqual(stats["epg_objects"], 2)
+        self.assertEqual(stats["payload_bytes"] + stats["overhead_bytes"], stats["stream_bytes"])
+        self.assertLess(stats["overhead_bytes"], stats["payload_bytes"] * 0.25)  # one pass, not a repeated carousel
         data = open(os.path.join(out, "spi.dat"), "rb").read()
         self.assertEqual(len(data), stats["stream_bytes"])
         from tests.test_encoder_roundtrip import decode_packets
@@ -336,6 +338,22 @@ class ApiTest(unittest.TestCase):
         mp = db.q1("SELECT id FROM feed_templates WHERE name = 'MPBNL'")
         self.assertEqual(db.q1("SELECT epg_feed_type FROM services WHERE id = ?", (sid,))["epg_feed_type"],
                          f"tpl:{mp['id']}")
+
+    def test_logo_broadcast_variant(self):
+        from odr_spi import media
+        import random
+        random.seed(2)
+        img = Image.new("RGB", (320, 240))
+        img.putdata([(random.randint(0, 255), x % 256, 128) for x in range(320 * 240)])
+        b = io.BytesIO()
+        img.save(b, "PNG")
+        name = media.store(b.getvalue(), "image/png")
+        data, mime = media.broadcast_variant(name, "image/png")
+        self.assertLess(len(data), len(b.getvalue()) * 0.9)
+        Image.open(io.BytesIO(data)).verify()
+        self.assertEqual(media.read(name), b.getvalue())  # original untouched
+        tiny = media.store(png(32, 32), "image/png")
+        self.assertEqual(media.broadcast_variant(tiny, "image/png")[1], "image/png")
 
     def test_login_lockout(self):
         self.login_admin()

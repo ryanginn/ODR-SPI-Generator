@@ -1167,6 +1167,9 @@ async function pageActivity(root) {
           h("div", { class: "stat" }, h("span", null, "EPG objects"), h("b", null, s.epg_objects)),
           h("div", { class: "stat" }, h("span", null, "Stream size"), h("b", null, fmtBytes(s.stream_bytes))),
           h("div", { class: "stat" }, h("span", null, `Cycle time @ ${s.bitrate} kbps`), h("b", null, fmtMinSec(s.cycle_seconds)))) : null,
+        s.logo_bytes !== undefined ? h("div", { class: "small muted" }, "One pass of the carousel: ",
+          `logos ${fmtBytes(s.logo_bytes)} · EPG ${fmtBytes(s.epg_bytes)} · service information ${fmtBytes(s.si_bytes)} · packet/datagroup headers ${fmtBytes(s.overhead_bytes)}`,
+          s.largest_logos && s.largest_logos.length ? h("div", null, "Largest logos: ", s.largest_logos.map((l) => `${l.label} (${fmtBytes(l.bytes)})`).join(", ")) : null) : null,
         last.warnings && last.warnings.length ? h("div", { class: "banner amber" }, icon("alert"), h("div", { class: "grow" },
           h("div", { class: "row" }, h("b", null, `${last.warnings.length} warning(s)`), h("span", { class: "spacer" }),
             isEditor() && last.warnings.length > 1 ? btn("Dismiss all", { cls: "sm", onclick: () => dismissWarning(last.id, null) }) : null),
@@ -1515,6 +1518,7 @@ async function pageSettings(root) {
   const muxName = inp(s.mux_name, { maxlength: 64, placeholder: "Defaults to the ensemble label" });
   const addr = h("input", { type: "number", min: 1, max: 1023, value: s.packet_address });
   const dg = toggle("Raw datagroup output (advanced - normally off)", s.datagroup_mode);
+  const optLogos = toggle("Compress logos for broadcast (256-colour PNG or JPEG, whichever is smaller; your uploads are kept as they are)", s.optimise_logos);
   const rmode = sel(s.refresh_mode, [["daily", "Once a day at a set time"], ["interval", "Every N hours"]]);
   const rtime = h("input", { type: "time", value: s.refresh_time });
   const rint = h("input", { type: "number", min: 1, max: 24, value: s.refresh_interval_hours });
@@ -1529,7 +1533,7 @@ async function pageSettings(root) {
   const save = async () => {
     try {
       await api("PUT", "/api/settings", { mux_name: muxName.value, output_path: path.value, write_mode: writeMode.value, bitrate: +bitrate.value, packet_address: +addr.value,
-        datagroup_mode: dg.box.checked, refresh_mode: rmode.value, refresh_time: rtime.value, refresh_interval_hours: +rint.value, epg_days: +days.value,
+        datagroup_mode: dg.box.checked, optimise_logos: optLogos.box.checked, refresh_mode: rmode.value, refresh_time: rtime.value, refresh_interval_hours: +rint.value, epg_days: +days.value,
         timezone: tz.value.trim(), allow_private_urls: priv.box.checked, session_hours: +sess.value });
       toast("Settings saved.", "ok"); refreshStatus();
       const st = await api("GET", "/api/state");
@@ -1548,7 +1552,7 @@ async function pageSettings(root) {
         } }))), field("Write mode", writeMode)),
       h("div", { class: "grid-2" },
         card("Carousel", "Must match the SPI subchannel and component in odr-dabmux.", field("Subchannel bitrate", bitrate,
-          { hint: "The packet size follows the bitrate: the largest packet that fits evenly into each 24 ms frame (Opendigitalradio's recommendation)." }), field("Packet address", addr), dg.el),
+          { hint: "The packet size follows the bitrate: the largest packet that fits evenly into each 24 ms frame (Opendigitalradio's recommendation)." }), field("Packet address", addr), optLogos.el, dg.el),
         card("Refresh schedule", "Logo URLs and EPG feeds are re-fetched and the carousel rebuilt from the last applied state. Apply always fetches too.",
           field("When", rmode), timeBox, intBox)),
       h("div", { class: "grid-2" },
