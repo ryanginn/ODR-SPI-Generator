@@ -72,6 +72,15 @@ class RoundTripTest(unittest.TestCase):
             self.assertEqual(bodies[1], objs[0].body)
             self.assertEqual(bodies[2], big)
 
+    def test_single_pass_ends_on_continuity_3(self):
+        # every packet count modulo 4, and a last datagroup too small to split evenly
+        for n_groups in range(1, 9):
+            groups = [msc.datagroup(100 + i, msc.DG_BODY, bytes(2 + i * 37), 0, i, True) for i in range(n_groups)]
+            for size in (24, 48, 72, 96):
+                stream = b"".join(msc.encode_packets(groups, address=1, size=size))
+                self.assertEqual(decode_packets(stream, size), groups)  # one pass, intact
+                self.assertEqual(len(msc.encode_packets(groups, 1, size)) % 4, 0)
+
     def test_timepoint(self):
         t = datetime(2026, 10, 26, 6, 30, tzinfo=timezone.utc)
         raw = int.from_bytes(spi_binary.timepoint(t), "big")

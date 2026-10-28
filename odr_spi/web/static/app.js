@@ -48,6 +48,9 @@ const ICONS = {
   moon: [["path", "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"]],
   monitor: [["rect", 2, 3, 20, 14, 2], ["path", "M8 21h8M12 17v4"]],
   heart: [["path", "M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"]],
+  login: [["path", "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"]],
+  braces: [["path", "M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"]],
+  play: [["path", "M5 3l14 9-14 9V3z"]],
   wifiOff: [["path", "M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"]],
 };
 
@@ -404,9 +407,14 @@ async function boot() {
 }
 
 function renderFatal() {
-  const app = clear(document.getElementById("app"));
-  app.appendChild(h("div", { class: "auth" }, h("div", { class: "auth-card" }, brand(), h("p", null, "Cannot reach the MPBNL SPI WebFrontend service."),
-    btn("Retry", { cls: "primary", onclick: boot }))));
+  const cmds = "sudo systemctl status odr-spi-generator --no-pager\n" +
+    "sudo journalctl -u odr-spi-generator -n 50 --no-pager\n" +
+    "sudo journalctl -u odr-spi-generator-update -n 50 --no-pager";
+  authCard(h("div", { class: "stack" }, h("h1", null, "Cannot reach the server"),
+    h("p", { class: "lead" }, "The MPBNL SPI WebFrontend service isn't responding. If an update is installing, give it a minute and retry. Otherwise, check the service on the server:"),
+    codeBlock(cmds),
+    h("p", { class: "small muted" }, "To start it again: sudo systemctl start odr-spi-generator. The SPI output file keeps broadcasting either way."),
+    btn("Retry", { cls: "primary block", icon: "refresh", onclick: boot })), true);
 }
 
 function brand() {
@@ -418,8 +426,9 @@ function brand() {
 
 function authCard(children, wide = false) {
   const app = clear(document.getElementById("app"));
-  const card = h("div", { class: "auth-card" + (wide ? " wide" : "") }, brand(), children);
-  app.appendChild(h("div", { class: "auth" }, card));
+  const card = h("div", { class: "auth-card" + (wide ? " wide" : "") }, children);
+  app.appendChild(h("div", { class: "auth" }, h("div", { class: "auth-wrap" }, brand(), card,
+    h("div", { class: "auth-foot" }, `MPBNL © ${new Date().getFullYear()}`))));
   return card;
 }
 
@@ -427,9 +436,11 @@ function renderLogin() {
   const u = inp("", { autocomplete: "username", required: true });
   const p = h("input", { type: "password", autocomplete: "current-password", required: true });
   const err = h("div", { class: "banner red hidden" });
-  const submit = btn("Sign in", { cls: "primary lg", type: "submit" });
-  const form = h("form", { class: "stack" }, h("h1", null, "Sign in"), h("p", { class: "muted" }, "Service & Programme Information manager"),
-    err, field("Username", u), field("Password", p), submit);
+  const submit = btn("Sign in", { cls: "primary lg block", type: "submit", icon: "login" });
+  const form = h("form", { class: "stack" }, h("h1", null, "Sign in to the panel"),
+    h("p", { class: "lead" }, "Manage your stations' logos, EPG and service information."),
+    err, field("Username", u), field("Password", p), submit,
+    h("p", { class: "auth-help" }, "Forgot your password? Ask an administrator to reset it."));
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     submit.disabled = true;
@@ -579,6 +590,7 @@ const NAV = [
   ]],
   ["MANAGE", [
     ["import", "Import", "import", isEditor],
+    ["templates", "EPG templates", "braces", isEditor],
     ["mux", "Mux config", "code", isEditor],
     ["users", "Users", "users", isAdmin],
     ["settings", "Settings", "sliders", isAdmin],
@@ -640,7 +652,7 @@ function route() {
   const key = parts[0];
   shellEls.nav.querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.key === key));
   const content = clear(shellEls.content);
-  const pages = { stations: pageStations, ensemble: pageEnsemble, activity: pageActivity, import: pageImport, mux: pageMux,
+  const pages = { stations: pageStations, ensemble: pageEnsemble, activity: pageActivity, import: pageImport, mux: pageMux, templates: pageTemplates,
     users: pageUsers, settings: pageSettings, audit: pageAudit, account: pageAccount };
   const fn = pages[key] || pageStations;
   Promise.resolve(fn(content, parts.slice(1))).catch((e) => {
@@ -1004,20 +1016,20 @@ function logoSlot(ownerId, w, hh, desc, logo, onChange) {
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 async function stationEpg(root, s) {
-  const [entries, preview] = await Promise.all([api("GET", `/api/services/${s.id}/programmes`), api("GET", `/api/services/${s.id}/epg/preview`)]);
+  const [entries, preview, templates] = await Promise.all([api("GET", `/api/services/${s.id}/programmes`),
+    api("GET", `/api/services/${s.id}/epg/preview`), api("GET", "/api/feed-templates")]);
   const en = toggle("Broadcast EPG for this station", s.epg_enabled);
   const feedUrl = inp(s.epg_feed_url, { type: "url", placeholder: "https://example.com/epg.xml" });
-  const feedType = sel(s.epg_feed_type, [["xmltv", "XMLTV"], ["spi", "SPI / RadioDNS PI XML"], ["mpbnl", "MPBNL (JSON, one request per day)"]]);
+  const feedType = sel(s.epg_feed_type, [["xmltv", "XMLTV"], ["spi", "SPI / RadioDNS PI XML"],
+    ...templates.map((t) => [`tpl:${t.id}`, `API template: ${t.name}`])]);
   const feedChan = inp(s.epg_feed_channel, { placeholder: "e.g. station.example" });
   const chanField = field("Channel id (XMLTV)", feedChan);
   const feedHint = h("div", { class: "small muted" });
   const syncFeedType = () => {
-    const mpbnl = feedType.value === "mpbnl";
+    const tpl = templates.find((t) => `tpl:${t.id}` === feedType.value);
     chanField.classList.toggle("hidden", feedType.value !== "xmltv");
-    feedUrl.placeholder = mpbnl ? "https://example.com/api/schedule?id=1&day=Monday" : "https://example.com/epg.xml";
-    feedHint.textContent = mpbnl
-      ? "Paste the URL for any one day. The day parameter (or a {day} placeholder) is replaced with Monday…Sunday to fetch the next 7 days on every refresh."
-      : "";
+    feedUrl.placeholder = tpl ? (tpl.definition.example_url || "https://example.com/api/schedule") : "https://example.com/epg.xml";
+    feedHint.textContent = tpl ? `${tpl.definition.description} ${FETCH_HELP[tpl.definition.fetch] || ""}` : "";
   };
   feedType.addEventListener("change", syncFeedType);
   syncFeedType();
@@ -1051,8 +1063,9 @@ async function stationEpg(root, s) {
         h("div", { class: "card-body stack" }, en.el,
           h("div", { class: "small muted" }, "Hand-entered programmes take priority; feed programmes fill the gaps.")),
         h("div", { class: "card-foot" }, btn("Save", { cls: "primary", onclick: saveFeed }))),
-      h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Schedule feed (optional)"), h("p", null, "Import programmes from an XMLTV, SPI XML or MPBNL URL, refreshed with the logos."))),
-        h("div", { class: "card-body stack" }, field("Format", feedType), field("Feed URL", feedUrl), feedHint, chanField,
+      h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Schedule feed (optional)"), h("p", null, "Import programmes from XMLTV, SPI XML or any JSON API through a template, refreshed with the logos."))),
+        h("div", { class: "card-body stack" }, field("Format", feedType, { hint: isEditor() ? "API templates are managed under EPG templates." : null }),
+          field("Feed URL", feedUrl), feedHint, chanField,
           s.epg_feed_status ? h("div", { class: "small " + (s.epg_feed_status.startsWith("error") ? "chip red" : "muted") }, s.epg_feed_status, s.epg_feed_checked ? ` · ${fmtAgo(s.epg_feed_checked)}` : "") : null),
         h("div", { class: "card-foot" }, btn("Save & fetch", { cls: "primary", onclick: saveFeed })))),
     h("div", { class: "section-gap" }),
@@ -1154,6 +1167,9 @@ async function pageActivity(root) {
           h("div", { class: "stat" }, h("span", null, "EPG objects"), h("b", null, s.epg_objects)),
           h("div", { class: "stat" }, h("span", null, "Stream size"), h("b", null, fmtBytes(s.stream_bytes))),
           h("div", { class: "stat" }, h("span", null, `Cycle time @ ${s.bitrate} kbps`), h("b", null, fmtMinSec(s.cycle_seconds)))) : null,
+        s.logo_bytes !== undefined ? h("div", { class: "small muted" }, "One pass of the carousel: ",
+          `logos ${fmtBytes(s.logo_bytes)} · EPG ${fmtBytes(s.epg_bytes)} · service information ${fmtBytes(s.si_bytes)} · packet/datagroup headers ${fmtBytes(s.overhead_bytes)}`,
+          s.largest_logos && s.largest_logos.length ? h("div", null, "Largest logos: ", s.largest_logos.map((l) => `${l.label} (${fmtBytes(l.bytes)})`).join(", ")) : null) : null,
         last.warnings && last.warnings.length ? h("div", { class: "banner amber" }, icon("alert"), h("div", { class: "grow" },
           h("div", { class: "row" }, h("b", null, `${last.warnings.length} warning(s)`), h("span", { class: "spacer" }),
             isEditor() && last.warnings.length > 1 ? btn("Dismiss all", { cls: "sm", onclick: () => dismissWarning(last.id, null) }) : null),
@@ -1373,6 +1389,124 @@ function userEditor(u, services) {
   });
 }
 
+/* ============================== EPG API templates ============================== */
+
+const FETCH_MODES = [["per_weekday", "One request per weekday"], ["per_date", "One request per date"], ["once", "One request for the whole week"]];
+const FETCH_HELP = {
+  per_weekday: "Paste the URL for any one day: the day is replaced for each weekday on every refresh.",
+  per_date: "Paste the URL for any one date: the date is replaced for each of the next days on every refresh.",
+  once: "One request covers the whole week.",
+};
+const TIME_FORMATS = [["clock", "Clock time on that day (HH:MM or HH:MM:SS, 24:00 = midnight)"], ["datetime", "Local date and time (YYYY-MM-DD HH:MM:SS)"],
+  ["iso", "ISO 8601 with offset (2026-10-27T07:00:00+01:00)"], ["unix", "Unix timestamp (seconds)"]];
+const BLANK_TEMPLATE = { name: "", description: "", example_url: "", fetch: "per_weekday", day_param: "day", day_value: "{weekday}",
+  items_path: "", title: "title", description_field: "description", start: "start", end: "end", duration: "", days: "", time_format: "clock" };
+
+async function pageTemplates(root) {
+  setCrumbs("EPG templates");
+  const tpls = await api("GET", "/api/feed-templates");
+  put(root,
+    h("div", { class: "page-head" }, h("div", null, h("h1", null, "EPG API templates"),
+      h("p", null, "Recipes for reading programme schedules from JSON APIs. Pick one per station on its EPG tab; the station supplies the URL.")),
+      h("span", { class: "spacer" }),
+      btn("Restore samples", { icon: "refresh", onclick: async () => {
+        try { const r = await api("POST", "/api/feed-templates/restore-samples", {}); toast(r.added ? `Restored ${r.added} sample(s).` : "All samples are present.", "ok"); route(); } catch (e) { /* toasted */ }
+      } }),
+      btn("Import JSON", { icon: "import", onclick: importTemplate }),
+      btn("New template", { cls: "primary", icon: "plus", onclick: () => templateEditor(null) })),
+    h("div", { class: "card" }, tpls.length ? h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, h("th", null, "Template"), h("th", null, "Requests"), h("th", null, "Used by"), h("th", null, ""))),
+      h("tbody", null, tpls.map((t) => h("tr", { class: "click", onclick: () => templateEditor(t) },
+        h("td", null, h("div", { class: "row" }, h("b", null, t.name), t.sample ? h("span", { class: "chip accent" }, "Sample") : null),
+          h("div", { class: "small muted" }, t.definition.description)),
+        h("td", { class: "nowrap small" }, (FETCH_MODES.find((m) => m[0] === t.definition.fetch) || [, ""])[1]),
+        h("td", { class: "nowrap" }, t.used_by ? `${t.used_by} station(s)` : h("span", { class: "muted" }, "—")),
+        h("td", { class: "nowrap" }, iconBtn("copy", "Copy as JSON", (e) => { e.stopPropagation(); copyText(JSON.stringify(t.definition, null, 2)); }),
+          iconBtn("plus", "Duplicate", (e) => { e.stopPropagation(); templateEditor({ definition: { ...t.definition, name: `${t.definition.name} (copy)` } }); })))))))
+      : h("div", { class: "card-body muted" }, "No templates - add one or restore the samples.")));
+}
+
+function importTemplate() {
+  const ta = h("textarea", { rows: 14, class: "mono", placeholder: '{ "name": "My station API", "fetch": "per_weekday", ... }' });
+  const m = modal({
+    title: "Import template JSON", wide: true,
+    body: h("div", { class: "stack" }, h("p", { class: "muted" }, "Paste a template copied with the copy button on another installation."), ta),
+    foot: [btn("Cancel", { onclick: () => m.close() }), btn("Open in editor", { cls: "primary", onclick: () => {
+      let d;
+      try { d = JSON.parse(ta.value); } catch (e) { return toast("That isn't valid JSON.", "error"); }
+      if (!d || typeof d !== "object" || Array.isArray(d)) return toast("Expected a JSON object.", "error");
+      m.close(); templateEditor({ definition: { ...BLANK_TEMPLATE, ...d } });
+    } })],
+  });
+}
+
+function templateEditor(t) {
+  const isNew = !t || !t.id;
+  const d = { ...BLANK_TEMPLATE, ...((t && t.definition) || {}) };
+  const f = {
+    name: inp(d.name, { maxlength: 64 }), description: inp(d.description, { maxlength: 500 }),
+    example_url: inp(d.example_url, { type: "url", maxlength: 500, placeholder: "https://example.com/api/schedule?day=Monday" }),
+    fetch: sel(d.fetch, FETCH_MODES), day_param: inp(d.day_param, { class: "mono", placeholder: "day" }),
+    day_value: inp(d.day_value, { class: "mono", placeholder: "{weekday}" }), items_path: inp(d.items_path, { class: "mono", placeholder: "(response is the list)" }),
+    title: inp(d.title, { class: "mono" }), description_field: inp(d.description_field, { class: "mono" }),
+    start: inp(d.start, { class: "mono" }), end: inp(d.end, { class: "mono" }), duration: inp(d.duration, { class: "mono", placeholder: "(optional, seconds)" }),
+    days: inp(d.days, { class: "mono", placeholder: "(optional)" }), time_format: sel(d.time_format, TIME_FORMATS),
+  };
+  const collect = () => Object.fromEntries(Object.entries(f).map(([k, el]) => [k, el.value.trim()]));
+  const dayBox = h("div", { class: "grid-2" }, field("Day query parameter", f.day_param, { hint: "Set on the URL for each day, or put {day} in the URL instead." }),
+    field("Day value", f.day_value, { hint: "{weekday} Monday · {weekday_lower} monday · {weekday_short} Mon · {weekday_num} 1-7 · {date} 2026-10-27 · {yyyymmdd}" }));
+  const syncFetch = () => dayBox.classList.toggle("hidden", f.fetch.value === "once");
+  f.fetch.addEventListener("change", syncFetch); syncFetch();
+
+  const testUrl = inp(d.example_url, { type: "url", placeholder: "URL to test with" });
+  const results = h("div", { class: "stack" });
+  const runTest = async () => {
+    clear(results).appendChild(h("div", { class: "row muted" }, h("span", { class: "spin" }), "Fetching…"));
+    try {
+      const r = await api("POST", "/api/feed-templates/test", { definition: collect(), url: testUrl.value }, { quiet: true });
+      clear(results);
+      put(results, h("div", { class: r.count ? "banner green" : "banner amber" }, icon(r.count ? "check" : "alert"),
+        h("div", null, r.count ? `${r.count} programme(s) over the next 7 days (${r.requests.length} request(s), times in ${r.timezone}).`
+          : "The request worked but no programmes matched - check the items path and field names.")),
+      r.programmes.length ? h("div", { class: "table-wrap" }, h("table", null, h("thead", null, h("tr", null, h("th", null, "Start"), h("th", null, "End"), h("th", null, "Title"), h("th", null, "Description"))),
+        h("tbody", null, r.programmes.map((p) => h("tr", null, h("td", { class: "mono small nowrap" }, fmtLocal(p.start)), h("td", { class: "mono small nowrap" }, fmtLocal(p.end)),
+          h("td", null, p.title), h("td", { class: "small muted" }, p.description)))))) : null,
+      h("details", null, h("summary", { class: "small muted" }, "Requests made"), h("div", { class: "code" }, r.requests.join("\n"))));
+    } catch (e) { clear(results).appendChild(h("div", { class: "banner red" }, icon("alert"), e.message)); }
+  };
+
+  const section = (title, ...body) => h("div", { class: "stack" }, h("h3", null, title), body);
+  const m = modal({
+    title: isNew ? "New EPG template" : `Edit ${d.name}`, wide: true,
+    body: h("div", { class: "stack" },
+      h("div", { class: "grid-2" }, field("Name", f.name, { max: 64 }), field("Example URL", f.example_url)),
+      field("Description", f.description, { max: 500 }),
+      section("Request", field("How to fetch", f.fetch), dayBox),
+      section("Response", h("div", { class: "small muted" }, "Dotted paths into the JSON, e.g. response.items or show.name. Use a|b to try a then b. The items path may contain day tokens, e.g. {weekday_lower}."),
+        h("div", { class: "grid-2" }, field("Items path (list of shows)", f.items_path), field("Time format", f.time_format)),
+        h("div", { class: "grid-3" }, field("Title", f.title), field("Description", f.description_field), field("Weekdays filter", f.days, { hint: "Comma-separated weekday names on each show" })),
+        h("div", { class: "grid-3" }, field("Start", f.start), field("End", f.end), field("Duration", f.duration))),
+      section("Test", h("div", { class: "row" }, testUrl, btn("Test", { icon: "play", onclick: runTest })), results)),
+    foot: [isNew ? null : btn("Delete", { cls: "danger", icon: "trash", onclick: async () => {
+      if (!(await confirmDialog(`Delete the template "${d.name}"?`, { danger: true, okText: "Delete" }))) return;
+      try { await api("DELETE", `/api/feed-templates/${t.id}`); m.close(); route(); } catch (e) { /* toasted */ }
+    } }), isNew ? null : btn("Copy JSON", { icon: "copy", onclick: () => copyText(JSON.stringify(collect(), null, 2)) }),
+    h("span", { class: "spacer" }), btn("Cancel", { onclick: () => m.close() }),
+    btn("Save", { cls: "primary", onclick: async () => {
+      try {
+        if (isNew) await api("POST", "/api/feed-templates", { definition: collect() });
+        else await api("PUT", `/api/feed-templates/${t.id}`, { definition: collect() });
+        toast("Template saved. Stations using it pick it up at the next refresh or Apply.", "ok"); m.close(); route();
+      } catch (e) { /* toasted */ }
+    } })],
+  });
+}
+
+function fmtLocal(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 /* ============================== settings ============================== */
 
 async function pageSettings(root) {
@@ -1384,6 +1518,7 @@ async function pageSettings(root) {
   const muxName = inp(s.mux_name, { maxlength: 64, placeholder: "Defaults to the ensemble label" });
   const addr = h("input", { type: "number", min: 1, max: 1023, value: s.packet_address });
   const dg = toggle("Raw datagroup output (advanced - normally off)", s.datagroup_mode);
+  const optLogos = toggle("Compress logos for broadcast (256-colour PNG or JPEG, whichever is smaller; your uploads are kept as they are)", s.optimise_logos);
   const rmode = sel(s.refresh_mode, [["daily", "Once a day at a set time"], ["interval", "Every N hours"]]);
   const rtime = h("input", { type: "time", value: s.refresh_time });
   const rint = h("input", { type: "number", min: 1, max: 24, value: s.refresh_interval_hours });
@@ -1398,7 +1533,7 @@ async function pageSettings(root) {
   const save = async () => {
     try {
       await api("PUT", "/api/settings", { mux_name: muxName.value, output_path: path.value, write_mode: writeMode.value, bitrate: +bitrate.value, packet_address: +addr.value,
-        datagroup_mode: dg.box.checked, refresh_mode: rmode.value, refresh_time: rtime.value, refresh_interval_hours: +rint.value, epg_days: +days.value,
+        datagroup_mode: dg.box.checked, optimise_logos: optLogos.box.checked, refresh_mode: rmode.value, refresh_time: rtime.value, refresh_interval_hours: +rint.value, epg_days: +days.value,
         timezone: tz.value.trim(), allow_private_urls: priv.box.checked, session_hours: +sess.value });
       toast("Settings saved.", "ok"); refreshStatus();
       const st = await api("GET", "/api/state");
@@ -1417,7 +1552,7 @@ async function pageSettings(root) {
         } }))), field("Write mode", writeMode)),
       h("div", { class: "grid-2" },
         card("Carousel", "Must match the SPI subchannel and component in odr-dabmux.", field("Subchannel bitrate", bitrate,
-          { hint: "The packet size follows the bitrate: the largest packet that fits evenly into each 24 ms frame (Opendigitalradio's recommendation)." }), field("Packet address", addr), dg.el),
+          { hint: "The packet size follows the bitrate: the largest packet that fits evenly into each 24 ms frame (Opendigitalradio's recommendation)." }), field("Packet address", addr), optLogos.el, dg.el),
         card("Refresh schedule", "Logo URLs and EPG feeds are re-fetched and the carousel rebuilt from the last applied state. Apply always fetches too.",
           field("When", rmode), timeBox, intBox)),
       h("div", { class: "grid-2" },

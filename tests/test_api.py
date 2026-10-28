@@ -9,7 +9,7 @@ import unittest
 
 from PIL import Image
 
-from odr_spi import __main__ as cli, build, config, db
+from odr_spi import __main__ as cli, build, config, db, security
 from odr_spi.web import create_app
 
 LEGACY_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -46,6 +46,8 @@ class ApiTest(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.cfg = dict(config.DEFAULTS, data_dir=os.path.join(self.dir, "data"))
         cli.init(self.cfg)
+        security.setup_limiter.hits.clear()  # limiters are process-wide; start each test fresh
+        security.login_limiter.hits.clear()
         self.token = cli.setup_token(self.cfg)
         self.app = create_app(self.cfg)
         self.c = self.app.test_client()
@@ -184,10 +186,14 @@ class ApiTest(unittest.TestCase):
         stats = json.loads(b["stats"])
         self.assertEqual(stats["services"], 2)
         self.assertEqual(stats["epg_objects"], 2)
+        self.assertEqual(stats["payload_bytes"] + stats["overhead_bytes"], stats["stream_bytes"])
         data = open(os.path.join(out, "spi.dat"), "rb").read()
         self.assertEqual(len(data), stats["stream_bytes"])
-        from tests.test_encoder_roundtrip import decode_packets
-        self.assertTrue(decode_packets(data, 48))
+        from tests.test_encoder_roundtrip import decode_packets, parse_datagroup
+        groups = decode_packets(data, 48)
+        # exactly one pass of the carousel: the MOT directory starts once
+        starts = [g for g in groups if parse_datagroup(g)[0] == 6 and parse_datagroup(g)[2] == 0]
+        self.assertEqual(len(starts), 1)
 
         # build details (paths, other stations' warnings) are hidden from station owners
         st_owner = self.call("get", "/api/status", client=oc, csrf=ocsrf)[1]
@@ -282,6 +288,74 @@ class ApiTest(unittest.TestCase):
         text = ["Carousel takes 9 min 0 s to cycle at 32 kbps"]
         self.assertEqual(build.split_dismissed(text, {"cycle_seconds": 540}), ([], text))
         self.assertEqual(build.split_dismissed(text, {"cycle_seconds": 700}), (text, []))
+
+    def test_feed_templates(self):
+        self.login_admin()
+        tpls = self.call("get", "/api/feed-templates")[1]
+        self.assertEqual({t["name"] for t in tpls}, {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)"})
+        coast = next(t for t in tpls if t["name"] == "Coast FM")
+        new = dict(coast["definition"], name="My API")
+        st, body = self.call("post", "/api/feed-templates", {"definition": new})
+        self.assertEqual(st, 200, body)
+        tid = body["id"]
+        self.assertEqual(self.call("post", "/api/feed-templates", {"definition": new})[0], 400)  # duplicate
+        bad = dict(new, title="x; import os")
+        self.assertEqual(self.call("put", f"/api/feed-templates/{tid}", {"definition": bad})[0], 400)
+        # a station using the template; deleting it is refused
+        sid = self.call("post", "/api/services", {"medium_name": "Demo", "short_name": "Demo",
+                                                  "bearers": [{"sid": "c0de"}]})[1]["id"]
+        st, body = self.call("put", f"/api/services/{sid}/epg", {"epg_enabled": True, "epg_feed_type": f"tpl:{tid}",
+                                                                 "epg_feed_url": "https://example.com/x.json"})
+        self.assertEqual(st, 200, body)
+        self.assertEqual(self.call("put", f"/api/services/{sid}/epg", {"epg_feed_type": "tpl:9999"})[0], 400)
+        self.assertEqual(self.call("delete", f"/api/feed-templates/{tid}")[0], 400)
+        self.assertEqual(next(t for t in self.call("get", "/api/feed-templates")[1] if t["id"] == tid)["used_by"], 1)
+        # SSRF guard applies to template tests too
+        st, body = self.call("post", "/api/feed-templates/test", {"definition": new, "url": "http://127.0.0.1/x"})
+        self.assertEqual(st, 400)
+        self.assertIn("private", body["error"])
+        # samples can be restored after deletion
+        mp = next(t for t in tpls if t["name"] == "MPBNL")
+        self.assertEqual(self.call("delete", f"/api/feed-templates/{mp['id']}")[0], 200)
+        self.assertEqual(self.call("post", "/api/feed-templates/restore-samples", {})[1]["added"], 1)
+        # station owners can list templates (to pick one) but not change them
+        self.call("post", "/api/users", {"username": "own1", "role": "station", "password": "owner password 1",
+                                         "services": [sid]})
+        oc = self.app.test_client()
+        self.call("post", "/api/login", {"username": "own1", "password": "owner password 1"}, client=oc, csrf="")
+        ocsrf = self.call("get", "/api/state", client=oc, csrf="")[1]["csrf"]
+        self.call("post", "/api/account/password", {"current": "owner password 1", "new": "owner password 2"},
+                  client=oc, csrf=ocsrf)
+        self.assertEqual(self.call("get", "/api/feed-templates", client=oc, csrf=ocsrf)[0], 200)
+        self.assertEqual(self.call("post", "/api/feed-templates", {"definition": dict(new, name="Z")},
+                                   client=oc, csrf=ocsrf)[0], 403)
+        self.assertEqual(self.call("post", "/api/feed-templates/test", {"definition": new, "url": "https://x.y"},
+                                   client=oc, csrf=ocsrf)[0], 403)
+
+    def test_legacy_mpbnl_feed_type_is_migrated(self):
+        self.login_admin()
+        sid = self.call("post", "/api/services", {"medium_name": "Old", "short_name": "Old"})[1]["id"]
+        db.x("UPDATE services SET epg_feed_type = 'mpbnl' WHERE id = ?", (sid,))
+        db.init(self.cfg["data_dir"])
+        mp = db.q1("SELECT id FROM feed_templates WHERE name = 'MPBNL'")
+        self.assertEqual(db.q1("SELECT epg_feed_type FROM services WHERE id = ?", (sid,))["epg_feed_type"],
+                         f"tpl:{mp['id']}")
+
+    def test_logo_broadcast_variant(self):
+        from odr_spi import media
+        import random
+        random.seed(2)
+        img = Image.new("RGB", (320, 240))
+        img.putdata([(random.randint(0, 255), x % 256, 128) for x in range(320 * 240)])
+        b = io.BytesIO()
+        img.save(b, "PNG")
+        name = media.store(b.getvalue(), "image/png")
+        data, mime = media.broadcast_variant(name, "image/png")
+        self.assertLess(len(data), len(b.getvalue()) * 0.9)
+        Image.open(io.BytesIO(data)).verify()
+        self.assertEqual(media.read(name), b.getvalue())  # original untouched
+        tiny = media.store(png(32, 32), "image/png")
+        self.assertEqual(media.broadcast_variant(tiny, "image/png")[1], "image/png")
 
     def test_login_lockout(self):
         self.login_admin()

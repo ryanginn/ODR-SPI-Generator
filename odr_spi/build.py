@@ -11,7 +11,7 @@ import time
 import zlib
 from datetime import datetime, timedelta, timezone
 
-from . import db, epg, fetch, media
+from . import db, epg, feed_templates, fetch, media
 from .encoder import mot, msc, spi_binary
 
 log = logging.getLogger("odr_spi.build")
@@ -89,7 +89,7 @@ def current_state():
         "ensemble_logos": [l for l in logos if l["owner_id"] == 0],
         "services": services,
         "settings": {k: settings[k] for k in ("output_path", "bitrate", "packet_address", "datagroup_mode",
-                                                "write_mode", "epg_days", "timezone")},
+                                                "write_mode", "epg_days", "timezone", "optimise_logos")},
     }
 
 
@@ -144,11 +144,16 @@ def refresh_logo(logo, allow_private):
 def refresh_feed(service, allow_private):
     now = time.time()
     try:
-        if service["epg_feed_type"] == "mpbnl":
+        if service["epg_feed_type"].startswith("tpl:"):
+            row = db.q1("SELECT definition FROM feed_templates WHERE id = ?",
+                        (int(service["epg_feed_type"][4:]),))
+            if not row:
+                raise feed_templates.TemplateError("the feed's API template has been deleted")
             days = max(7, int(db.get_setting("epg_days") or 0))
-            progs = epg.fetch_mpbnl(
-                service["epg_feed_url"], days, epg.get_tz(db.get_setting("timezone")),
-                lambda u: fetch.fetch(u, allow_private=allow_private, max_bytes=2 * 1024 * 1024,
+            progs = feed_templates.run(
+                feed_templates.validate(json.loads(row["definition"])), service["epg_feed_url"], days,
+                epg.get_tz(db.get_setting("timezone")),
+                lambda u: fetch.fetch(u, allow_private=allow_private, max_bytes=5 * 1024 * 1024,
                                       accept="application/json")[0])
         else:
             data, _, _ = fetch.fetch(service["epg_feed_url"], allow_private=allow_private,
@@ -222,7 +227,10 @@ def generate(snap, now=None):
     objects = []
     version = int(now.timestamp()) & 0x7FFFFFFF
 
-    def logo_objects(owner_key, logos):
+    logo_sizes = []  # (bytes, label) for the stats breakdown
+    optimise = s.get("optimise_logos", True)
+
+    def logo_objects(owner_key, logos, label):
         refs = []
         for l in logos:
             if not l.get("file"):
@@ -230,21 +238,26 @@ def generate(snap, now=None):
                     warnings.append(f"{owner_key}: {l['width']}x{l['height']} logo URL has never been fetched")
                 continue
             try:
-                body = media.read(l["file"])
+                if optimise:
+                    body, mime = media.broadcast_variant(l["file"], l["mime"])
+                else:
+                    body, mime = media.read(l["file"]), l["mime"]
             except (OSError, ValueError):
                 warnings.append(f"{owner_key}: {l['width']}x{l['height']} logo file is missing")
                 continue
-            ext = "png" if l["mime"] == "image/png" else "jpg"
+            ext = "png" if mime == "image/png" else "jpg"
             name = f"{owner_key}_{l['width']}x{l['height']}_{l['file'][:8]}.{ext}"
-            ct = mot.CT_IMAGE_PNG if l["mime"] == "image/png" else mot.CT_IMAGE_JFIF
+            ct = mot.CT_IMAGE_PNG if mime == "image/png" else mot.CT_IMAGE_JFIF
             objects.append(mot.MotObject(name, body, ct, alloc(name))
                            .add(mot.UniqueBodyVersion(zlib.crc32(body))))
-            refs.append((name, l["mime"], l["width"], l["height"]))
+            refs.append((name, mime, l["width"], l["height"]))
+            logo_sizes.append((len(body), f"{label} {l['width']}x{l['height']}"))
         return refs
 
     ensemble = {"ecc": ecc, "eid": eid, "short_name": ens.get("short_name", ""),
                 "medium_name": ens.get("medium_name", ""),
-                "media": logo_objects(f"ens{eid:04x}", snap["ensemble_logos"])}
+                "media": logo_objects(f"ens{eid:04x}", snap["ensemble_logos"],
+                                      ens.get("medium_name") or "Ensemble")}
 
     tz = epg.get_tz(s.get("timezone"))
     today = now.astimezone(tz).date()
@@ -267,7 +280,7 @@ def generate(snap, now=None):
         key = f"{bearers[0][2]:04x}"
         services.append({
             "short_name": svc["short_name"], "medium_name": svc["medium_name"], "long_name": svc["long_name"],
-            "bearers": bearers, "media": logo_objects(key, svc["logos"]),
+            "bearers": bearers, "media": logo_objects(key, svc["logos"], svc["medium_name"] or key),
             "short_description": svc["short_description"], "long_description": svc["long_description"],
             "genres": svc["genres"], "links": [svc["website"]] if svc["website"] else [],
         })
@@ -311,14 +324,21 @@ def generate(snap, now=None):
         stream = b"".join(msc.encode_packets(groups, address=int(s.get("packet_address") or 1),
                                              size=packet_size_for(bitrate)))
     payload = sum(len(o.body) for o in objects)
+    logo_bytes = sum(b for b, _ in logo_sizes)
+    epg_bytes = sum(len(o.body) for o in objects if o.content_type == mot.CT_SPI_PI)
     stats = {
-        "services": len(services), "objects": len(objects), "logos": len(objects) - 1 - pi_count,
+        "services": len(services), "objects": len(objects), "logos": len(logo_sizes),
         "epg_objects": pi_count, "payload_bytes": payload, "stream_bytes": len(stream),
+        "logo_bytes": logo_bytes, "epg_bytes": epg_bytes, "si_bytes": len(si),
+        "overhead_bytes": len(stream) - payload,
+        "largest_logos": [{"label": label, "bytes": b} for b, label in sorted(logo_sizes, reverse=True)[:5]],
         "bitrate": bitrate, "cycle_seconds": round(len(stream) * 8 / (bitrate * 1000), 1),
     }
     if stats["cycle_seconds"] > SLOW_CYCLE_SECONDS:
+        biggest = max((logo_bytes, "logos"), (epg_bytes, "EPG"), (len(si), "service information"))
         warnings.append(f"Carousel takes {fmt_duration(stats['cycle_seconds'])} to cycle at {bitrate} kbps - "
-                        "consider a higher bitrate, fewer EPG days or smaller logos")
+                        f"{biggest[1]} make up {biggest[0] * 100 // max(payload, 1)}% of it; consider a higher "
+                        "bitrate, fewer EPG days or smaller logos")
     return stream, stats, warnings
 
 

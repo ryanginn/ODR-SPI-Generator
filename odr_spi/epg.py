@@ -1,12 +1,11 @@
-"""EPG schedule expansion and feed parsing (XMLTV, SPI Programme Information XML and
-MPBNL day-by-day JSON schedules)."""
+"""EPG schedule expansion and feed parsing (XMLTV and SPI Programme Information XML;
+JSON APIs are handled by feed_templates)."""
 
 import json
 import os
 import re
 import zlib
 from datetime import date, datetime, time, timedelta, timezone
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from defusedxml import ElementTree as ET
 
@@ -198,74 +197,3 @@ def parse_feed(data: bytes, feed_type: str, channel: str = ""):
                        "genres": p["genres"][:8]})
     return result
 
-
-# --- MPBNL: JSON schedule API queried once per weekday ------------------------------------
-
-WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-_HMS = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$")
-
-
-def day_url(url, day_name):
-    """Point a schedule URL at one weekday: replaces a {day} placeholder, or
-    sets the 'day' query parameter (added if missing)."""
-    if "{day}" in url:
-        return url.replace("{day}", quote(day_name))
-    parts = urlsplit(url)
-    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() != "day"]
-    query.append(("day", day_name))
-    return urlunsplit(parts._replace(query=urlencode(query)))
-
-
-def _clock(value):
-    m = _HMS.match(str(value or "").strip())
-    if not m:
-        raise ValueError(value)
-    h, mi, sec = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
-    if h > 24 or mi > 59 or sec > 59 or (h == 24 and (mi or sec)):
-        raise ValueError(value)
-    return timedelta(hours=h, minutes=mi, seconds=sec)
-
-
-def parse_mpbnl_day(data: bytes, day: date, tz):
-    """Parse one day's JSON response: a list of {showname, showdesc, days,
-    fromTime, tilTime}. Times are local to tz; tilTime 24:00:00 or earlier
-    than fromTime runs past midnight."""
-    rows = json.loads(data.decode("utf-8-sig"))
-    if not isinstance(rows, list):
-        raise ValueError("expected a JSON list of shows")
-    name = WEEKDAYS[day.weekday()].lower()
-    midnight = datetime.combine(day, time(0)).replace(tzinfo=tz)
-    out = []
-    for r in rows[:500]:
-        if not isinstance(r, dict) or not isinstance(r.get("showname"), str) or not r["showname"].strip():
-            continue
-        days = r.get("days")
-        if isinstance(days, str) and days.strip() and name not in [d.strip().lower() for d in days.split(",")]:
-            continue
-        try:
-            start_off, end_off = _clock(r.get("fromTime")), _clock(r.get("tilTime"))
-        except ValueError:
-            continue
-        if end_off <= start_off:
-            end_off += timedelta(days=1)
-        start = midnight + start_off
-        end = midnight + end_off
-        desc = r.get("showdesc") if isinstance(r.get("showdesc"), str) else ""
-        out.append({"start": start.isoformat(), "end": end.isoformat(), "title": r["showname"].strip()[:128],
-                    "description": desc.strip()[:1200], "genres": []})
-    return out
-
-
-def fetch_mpbnl(url, days, tz, fetcher):
-    """Fetch `days` days starting today (in tz), one request per weekday.
-    fetcher(url) -> bytes."""
-    today = datetime.now(tz).date()
-    responses = {}
-    out = []
-    for n in range(days):
-        day = today + timedelta(days=n)
-        name = WEEKDAYS[day.weekday()]
-        if name not in responses:
-            responses[name] = fetcher(day_url(url, name))
-        out += parse_mpbnl_day(responses[name], day, tz)
-    return out

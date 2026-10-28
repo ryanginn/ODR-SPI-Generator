@@ -106,10 +106,21 @@ Per station, under **EPG**:
 - **Feed (optional)**: hand-entered programmes take priority and feed programmes fill the gaps. Supported formats:
   - **XMLTV** URL, with the channel id to use.
   - **SPI / RadioDNS PI XML** URL.
-  - **MPBNL**: a JSON schedule API queried one day at a time. Paste the URL for any one day, e.g. `https://example.com/api/schedule?id=1&day=Monday`. On every refresh the generator requests it once per weekday (`day=Monday` … `day=Sunday`) to cover the next 7 days. You can also put a `{day}` placeholder anywhere in the URL instead. Each response is a JSON list of shows with `showname`, `showdesc`, `days` (comma-separated weekday names), `fromTime` and `tilTime` (`HH:MM:SS`, local time; `24:00:00` or a time earlier than `fromTime` runs past midnight).
+  - **JSON APIs, through templates**. Pick a template, then paste the station's URL. See below.
 - **Preview**: the next days as receivers will get them.
 
 *Settings → EPG* sets how many days to broadcast (default 7, 0 disables) and the timezone. Each extra day adds data, and the Activity page shows the full carousel cycle time at your bitrate.
+
+### EPG API templates
+
+*EPG templates* (editors and admins) holds recipes for reading schedules from JSON APIs, so a new station API needs no code change. A template says:
+
+- **How to request**: one request per weekday (`day=Monday` … `Sunday`), one per date (`day=2026-10-27`), or one request for the whole week. The day goes into a query parameter you name, or into a `{day}` placeholder in the URL. Day tokens are `{weekday}`, `{weekday_lower}`, `{weekday_short}`, `{weekday_num}`, `{date}` and `{yyyymmdd}`.
+- **Where the shows are**: a dotted path to the list, e.g. `response.items`. It may use day tokens, e.g. `{weekday_lower}` for `{"monday": [...]}`.
+- **Which fields to use**: title, description, start, end or duration, and an optional weekday filter. `a|b` tries `a` then `b`.
+- **How times are written**: clock times on that day (`24:00` = midnight, and shows past midnight are handled), local date-times, ISO 8601 or Unix timestamps.
+
+**Test** fetches a URL and shows exactly what will be broadcast, before you save. **Copy JSON** and **Import JSON** let you share templates between installations. Three samples are included: **MPBNL**, **Coast FM** and **Radio Slovenija (RTV SLO)**. *Restore samples* brings back any you deleted. Templates are pure data and are never run as code. Every request goes through the same SSRF-protected fetcher as logo URLs.
 
 ### Importing legacy SPI / XSI XML
 
@@ -122,6 +133,10 @@ Per station, under **EPG**:
 - text mangled by a wrong encoding (`RaidiÃ³ RÃ­ RÃ¡`) is repaired (`Raidió Rí Rá`) and listed for review.
 
 Merge mode updates stations that share the same primary SId and adds the rest. You can also add everything as new, or replace all stations.
+
+### Carousel size
+
+The Activity page shows the length of one pass of the carousel at your bitrate, split into logos, EPG, service information and packet headers, and names the largest logos. *Settings → Carousel → Compress logos for broadcast* (on by default) sends a 256-colour PNG or JPEG copy of each logo when that is at least 10% smaller. Your uploads aren't changed. Photo-like logos typically shrink 5–10×, so large 600×600 and 320×240 PNGs are the first place to look if the cycle is long.
 
 ### Warnings
 
