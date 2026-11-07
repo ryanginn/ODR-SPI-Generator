@@ -61,6 +61,18 @@ class FetchTest(unittest.TestCase):
         self.assertIn("/loop", str(cm.exception))
         self.assertIn("bot protection", str(cm.exception))
 
+    def test_host_header_has_no_default_port(self):
+        for cls, port, want in ((fetch._PinnedHTTPSConnection, 443, b"Host: www.example.com"),
+                                (fetch._PinnedHTTPConnection, 80, b"Host: www.example.com"),
+                                (fetch._PinnedHTTPSConnection, 8443, b"Host: www.example.com:8443")):
+            c = cls("www.example.com", port, None)
+            sent = []
+            c.send = sent.append
+            c.putrequest("GET", "/")
+            c.endheaders()
+            hosts = [l for l in b"".join(sent).split(b"\r\n") if l.lower().startswith(b"host:")]
+            self.assertEqual(hosts, [want], (cls.__name__, port))
+
     def test_private_addresses_still_refused(self):
         with self.assertRaises(fetch.FetchError):
             fetch.fetch(self.base + "/challenge")

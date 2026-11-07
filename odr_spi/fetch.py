@@ -72,6 +72,10 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 
 
 class _PinnedHTTPSConnection(_PinnedHTTPConnection):
+    # without this the Host header becomes "host:443", which sites such as
+    # WordPress "correct" with a redirect to the same URL - a redirect loop
+    default_port = 443
+
     def connect(self):
         super().connect()
         ctx = ssl.create_default_context()
