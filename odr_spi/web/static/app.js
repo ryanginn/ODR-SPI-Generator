@@ -736,7 +736,7 @@ function logoTile(name, logos, lg = false) {
 
 function stationProblems(s) {
   const p = [];
-  if (!s.bearers.length) p.push("No SId");
+  if (!dabOf(s).length) p.push("No SId");
   if (!s.logos.some((l) => l.width === 32 && l.height === 32 && l.file)) p.push("No 32×32 logo");
   if (s.logos.some((l) => l.fetch_status === "error")) p.push("Logo URL failing");
   if (s.epg_feed_status && s.epg_feed_status.startsWith("error")) p.push("EPG feed failing");
@@ -763,7 +763,7 @@ async function pageStationList(root) {
     clear(grid);
     const q = stationFilter.q.toLowerCase();
     const list = services.filter((s) => {
-      if (q && ![s.medium_name, s.short_name, s.long_name, ...s.bearers.map((b) => b.sid)].some((x) => (x || "").toLowerCase().includes(q))) return false;
+      if (q && ![s.medium_name, s.short_name, s.long_name, ...s.bearers.map((b) => b.sid || b.pi), ...s.bearers.filter(isFm).map((b) => b.freq)].some((x) => (x || "").toLowerCase().includes(q))) return false;
       if (stationFilter.tab === "issues") return stationProblems(s).length > 0;
       if (stationFilter.tab === "epg") return s.epg_enabled;
       if (stationFilter.tab === "off") return !s.enabled;
@@ -791,10 +791,10 @@ async function pageStationList(root) {
 
 function stationCard(s) {
   const problems = stationProblems(s);
-  const sids = s.bearers.map((b) => b.sid.toUpperCase() + (b.scids ? "." + b.scids : ""));
+  const sids = s.bearers.map(bearerLabel);
   let pill;
   if (!s.enabled) pill = h("span", { class: "pill muted" }, "Disabled");
-  else if (!s.bearers.length) pill = h("span", { class: "pill red" }, icon("wifiOff"), "No SId");
+  else if (!dabOf(s).length) pill = h("span", { class: "pill red" }, icon("wifiOff"), "No SId");
   else pill = h("span", { class: "pill green" }, h("i", { class: "dot green" }), "In carousel");
   const strip = h("div", { class: "logo-strip" }, LOGO_SIZES.map(([w, hh]) => {
     const l = s.logos.find((x) => x.width === w && x.height === hh);
@@ -818,7 +818,7 @@ function stationCard(s) {
     h("div", { class: "stack tight" }, h("div", { class: "row" }, h("div", { class: "stat-line" }, h("b", null, have), `of ${LOGO_SIZES.length} logo sizes`),
       h("span", { class: "spacer" }), h("span", { class: "small muted" }, s.epg_enabled ? `EPG · ${s.programme_count} entries${s.epg_feed_url ? " + feed" : ""}` : "EPG off")), meter),
     h("div", { class: "sc-foot" },
-      sids.length ? sids.slice(0, 3).map((x) => h("span", { class: "chip mono" }, "SId " + x)) : null,
+      sids.length ? sids.slice(0, 3).map((x) => h("span", { class: "chip mono" }, x)) : null,
       problems.filter((p) => p !== "No SId").map((p) => h("span", { class: "chip red" }, icon("alert"), p)),
       s.logos.some((l) => l.source === "url") ? h("span", { class: "chip blue" }, icon("link"), "URL") : null,
       h("span", { class: "when" }, "Updated " + fmtAgo(s.updated_at))));
@@ -854,7 +854,7 @@ async function pageStationDetail(root, id, tab) {
   put(root, 
     h("div", { class: "page-head" }, iconBtn("arrowLeft", "Back to stations", () => { location.hash = "#/stations"; }), logoTile(s.medium_name, s.logos, true),
       h("div", { class: "grow" }, h("h1", null, s.medium_name || "(unnamed)"),
-        h("p", null, [s.short_name, s.bearers.map((b) => `SId ${b.sid.toUpperCase()}`).join(" · ")].filter(Boolean).join(" · ") || "No service ID")),
+        h("p", null, [s.short_name, s.bearers.map(bearerLabel).join(" · ")].filter(Boolean).join(" · ") || "No service ID")),
       s.enabled ? h("span", { class: "pill green" }, "Enabled") : h("span", { class: "pill muted" }, "Disabled")),
     tabs, body);
   if (tab === "overview") stationOverview(body, s);
@@ -882,26 +882,43 @@ function genrePicker(initial, disabled) {
   return { el: h("div", { class: "stack tight" }, list, disabled ? null : select), get: () => values };
 }
 
+// FM bearers carry {type: "fm", ecc, pi, freq}; DAB bearers have no type (or "dab")
+const isFm = (b) => b.type === "fm";
+const dabOf = (s) => s.bearers.filter((b) => !isFm(b));
+const bearerLabel = (b) => (isFm(b) ? `FM ${b.freq}` : `SId ${b.sid.toUpperCase()}${b.scids ? "." + b.scids : ""}`);
+
 function bearerEditor(initial, disabled) {
   const rows = [];
   const wrap = h("div", { class: "stack tight" });
   const table = h("div", { class: "stack tight" });
   const add = (b = { ecc: "", eid: "", sid: "", scids: 0 }) => {
+    const fm = isFm(b);
+    const type = sel(fm ? "fm" : "dab", [["dab", "DAB"], ["fm", "FM"]], { disabled, "aria-label": "Bearer type" });
     const r = {
+      type,
       ecc: inp(b.ecc, { class: "mono", placeholder: "ens", maxlength: 2, disabled, "aria-label": "ECC" }),
       eid: inp(b.eid, { class: "mono", placeholder: "ens", maxlength: 4, disabled, "aria-label": "EId" }),
       sid: inp(b.sid, { class: "mono", placeholder: "c586", maxlength: 4, disabled, "aria-label": "SId" }),
       scids: h("input", { type: "number", min: 0, max: 15, value: b.scids || 0, disabled, "aria-label": "SCIdS" }),
+      pi: inp(b.pi, { class: "mono", placeholder: "PI, e.g. 6209", maxlength: 4, disabled, "aria-label": "PI code" }),
+      freq: inp(b.freq, { placeholder: "MHz, e.g. 106.2", inputmode: "decimal", maxlength: 6, disabled, "aria-label": "Frequency (MHz)" }),
     };
-    r.el = h("div", { class: "grid-4" }, r.ecc, r.eid, r.sid, h("div", { class: "row" }, r.scids,
-      disabled ? null : iconBtn("trash", "Remove bearer", () => { rows.splice(rows.indexOf(r), 1); r.el.remove(); })));
+    const dabCells = h("div", { class: "bearer-fields" }, r.eid, r.sid, r.scids);
+    const fmCells = h("div", { class: "bearer-fields fm" }, r.pi, r.freq);
+    const sync = () => { const f = type.value === "fm"; dabCells.classList.toggle("hidden", f); fmCells.classList.toggle("hidden", !f); };
+    type.addEventListener("change", sync); sync();
+    r.el = h("div", { class: "bearer-row" }, type, r.ecc, dabCells, fmCells,
+      disabled ? h("span") : iconBtn("trash", "Remove bearer", () => { rows.splice(rows.indexOf(r), 1); r.el.remove(); }));
     rows.push(r); table.appendChild(r.el);
   };
   initial.forEach(add);
   if (!initial.length && !disabled) add();
-  put(wrap, h("div", { class: "grid-4 small muted" }, h("span", null, "ECC"), h("span", null, "EId"), h("span", null, "SId"), h("span", null, "SCIdS")), table,
+  put(wrap, h("div", { class: "small muted" }, "DAB: ECC, EId, SId, SCIdS · FM: ECC, PI code, frequency. Empty ECC/EId use the ensemble's."), table,
     disabled ? null : h("div", null, btn("Add bearer", { cls: "sm ghost", icon: "plus", onclick: () => add() })));
-  return { el: wrap, get: () => rows.map((r) => ({ ecc: r.ecc.value.trim(), eid: r.eid.value.trim(), sid: r.sid.value.trim(), scids: +r.scids.value || 0 })).filter((b) => b.sid) };
+  return { el: wrap, get: () => rows.map((r) => (r.type.value === "fm"
+    ? { type: "fm", ecc: r.ecc.value.trim(), pi: r.pi.value.trim(), freq: r.freq.value.trim() }
+    : { ecc: r.ecc.value.trim(), eid: r.eid.value.trim(), sid: r.sid.value.trim(), scids: +r.scids.value || 0 }))
+    .filter((b) => (b.type === "fm" ? b.pi || b.freq : b.sid)) };
 }
 
 function stationOverview(root, s) {
@@ -930,7 +947,7 @@ function stationOverview(root, s) {
           field("Website", f.website), field("Genres", genres.el)))),
     h("div", { class: "section-gap" }),
     h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Bearers"),
-      h("p", null, "Where this station is on air. The first one is the primary SId. Leave ECC/EId empty to use the ensemble's; SCIdS > 0 for secondary components."))),
+      h("p", null, "Where this station is on air. The first DAB bearer is the primary SId; SCIdS > 0 for secondary components. Add FM bearers so receivers know the station's FM frequency."))),
       h("div", { class: "card-body stack" }, bearers.el, core ? enabled.el : null,
         s.owners ? h("div", { class: "small muted" }, "Station owners: ", s.owners.length ? s.owners.join(", ") : "none - assign them under Users") : null),
       h("div", { class: "card-foot" }, core ? btn("Delete station", { cls: "danger", icon: "trash", onclick: async () => {
@@ -1350,7 +1367,7 @@ function userEditor(u, services) {
   const disabled = toggle("Account disabled", !!u.disabled);
   const picks = new Set(u.services);
   const svcList = h("div", { class: "list-check" }, services.length ? services.map((s) => {
-    const t = toggle(s.medium_name + (s.bearers[0] ? `  ·  ${s.bearers[0].sid.toUpperCase()}` : ""), picks.has(s.id));
+    const t = toggle(s.medium_name + (dabOf(s)[0] ? `  ·  ${dabOf(s)[0].sid.toUpperCase()}` : ""), picks.has(s.id));
     t.box.addEventListener("change", () => (t.box.checked ? picks.add(s.id) : picks.delete(s.id)));
     return t.el;
   }) : h("span", { class: "muted small" }, "No stations yet."));

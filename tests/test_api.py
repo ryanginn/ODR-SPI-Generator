@@ -371,6 +371,33 @@ class ApiTest(unittest.TestCase):
         tiny = media.store(png(32, 32), "image/png")
         self.assertEqual(media.broadcast_variant(tiny, "image/png")[1], "image/png")
 
+    def test_fm_bearers(self):
+        self.login_admin()
+        out = os.path.join(self.dir, "spi.dat")
+        self.call("put", "/api/settings", {"output_path": out})
+        self.call("put", "/api/ensemble", {"ecc": "e1", "eid": "c0de", "short_name": "Demo", "medium_name": "Demo Mux"})
+        sid = self.call("post", "/api/services", {"medium_name": "Nova", "short_name": "Nova"})[1]["id"]
+        fm = {"type": "fm", "pi": "6209", "freq": "106,2"}
+        st, body = self.call("patch", f"/api/services/{sid}", {"bearers": [fm, {"sid": "6209"}]})
+        self.assertEqual(st, 200, body)
+        bearers = self.call("get", f"/api/services/{sid}")[1]["bearers"]
+        self.assertEqual(bearers[0]["sid"], "6209")  # DAB first: it is the primary SId
+        self.assertEqual(bearers[1], {"type": "fm", "ecc": "", "pi": "6209", "freq": "106.2"})
+        for bad in ({"type": "fm", "pi": "6209", "freq": "120"}, {"type": "fm", "pi": "xyz", "freq": "98.5"},
+                    {"type": "fm", "pi": "6209", "freq": "abc"}):
+            self.assertEqual(self.call("patch", f"/api/services/{sid}", {"bearers": [bad]})[0], 400, bad)
+        # FM-only station: skipped from the carousel with a warning
+        only_fm = self.call("post", "/api/services", {"medium_name": "FM only", "short_name": "FMonly",
+                                                       "bearers": [{"type": "fm", "pi": "62aa", "freq": "98.5"}]})[1]["id"]
+        bid = build.run("test", None, apply_changes=True, refresh=False)
+        b = db.q1("SELECT * FROM builds WHERE id = ?", (bid,))
+        self.assertIn("FM only: no valid DAB bearer", " ".join(json.loads(b["warnings"])))
+        self.assertEqual(json.loads(b["stats"])["services"], 1)
+        from tests.test_encoder_roundtrip import decode_packets, parse_datagroup
+        body = b"".join(parse_datagroup(g)[4] for g in decode_packets(open(out, "rb").read(), 48))
+        self.assertIn(bytes([0x2D, 19, 0x80, 17]) + b"fm:6e1.6209.10620", body)  # gcc = first PI digit 6 + ECC e1
+        self.assertTrue(only_fm)
+
     def test_login_lockout(self):
         self.login_admin()
         c2 = self.app.test_client()

@@ -38,6 +38,24 @@ def rtv_json(day):
     ], "meta": {"name": "Val 202", "dates": [day]}}}).encode()
 
 
+class BearerImportTest(unittest.TestCase):
+    def test_fm_bearer_ids(self):
+        from odr_spi import importers
+        self.assertEqual(importers.parse_fm_bearer("fm:ce1.6209.10620"),
+                         {"type": "fm", "ecc": "e1", "pi": "6209", "freq": "106.2"})
+        self.assertEqual(importers.parse_fm_bearer("fm:2e3.2491.09850")["freq"], "98.5")
+        self.assertIsNone(importers.parse_fm_bearer("fm:ce1.6209.20000"))  # 200 MHz is not FM
+        xml = b"""<serviceInformation xmlns="http://www.worlddab.org/schemas/spi/31"><services id="e1c0de"><service>
+          <shortName>Nova</shortName><mediumName>Radio Nova</mediumName>
+          <bearer id="fm:ce1.6209.10620" cost="40"/><bearer id="dab:ce1.c0de.6209.0" cost="20"/>
+          <bearer id="http://stream.example/nova.mp3" cost="100"/></service></services></serviceInformation>"""
+        r = importers.parse_legacy_si(xml)
+        bearers = r["services"][0]["bearers"]
+        self.assertEqual([b.get("type", "dab") for b in bearers], ["dab", "fm"])  # DAB first
+        self.assertEqual(bearers[1]["pi"], "6209")
+        self.assertTrue(any("not a DAB or FM bearer" in w for w in r["warnings"]))  # the stream URL
+
+
 class TemplateTest(unittest.TestCase):
     def test_samples_are_valid(self):
         self.assertEqual(set(SAMPLES), {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)", "Rayo / Planet Radio (Bauer)",

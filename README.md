@@ -82,6 +82,10 @@ Edits are saved immediately but **published only when someone clicks *Apply***. 
 
 The scheduled refresh (default: daily at 00:00, or every N hours) re-fetches URLs and feeds and rebuilds from the **last applied** state, so half-finished edits are never published by the timer. The scheduled rebuild also rolls the EPG window forward each day.
 
+### Bearers (DAB and FM)
+
+Each station lists where it is on air. **DAB** bearers are ECC, EId, SId and SCIdS; the first one is the station's primary SId. **FM** bearers are ECC, PI code and frequency, and are broadcast in the service information as `fm:<gcc>.<pi>.<frequency>`, e.g. `fm:6e1.6209.10620` for PI 6209 on 106.2 MHz in Finland. They tell hybrid and connected radios the station's FM frequency. Automatic DAB→FM switching in car radios comes from service linking and frequency information (FIG 0/6 and 0/21) in the ODR-DabMux configuration, not from SPI. The legacy XML importer keeps `fm:` bearers.
+
 ### Logos
 
 Each station (and the ensemble) has one slot per size:

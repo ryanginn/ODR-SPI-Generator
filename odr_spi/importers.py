@@ -39,6 +39,17 @@ def _text(e, name):
     return ""
 
 
+def parse_fm_bearer(bid):
+    """'fm:ce1.6209.10620' -> {type: fm, ecc, pi, freq (MHz)}; the frequency is in 10 kHz units."""
+    m = re.fullmatch(r"fm:([0-9a-fA-F])([0-9a-fA-F]{2})\.([0-9a-fA-F]{4})\.(\d{4,5})", (bid or "").strip())
+    if not m:
+        return None
+    mhz = int(m.group(4)) / 100
+    if not 76.0 <= mhz <= 108.0:
+        return None
+    return {"type": "fm", "ecc": m.group(2).lower(), "pi": m.group(3).lower(), "freq": f"{mhz:g}"}
+
+
 def parse_bearer_id(bid):
     """'dab:2e3.2ea1.2491.0' -> {ecc, eid, sid, scids}."""
     m = re.fullmatch(r"dab:([0-9a-fA-F])([0-9a-fA-F]{2})\.([0-9a-fA-F]{4})\.([0-9a-fA-F]{4})\.([0-9a-fA-F])",
@@ -122,16 +133,20 @@ def parse_legacy_si(data: bytes):
                     svc["website"] = uri[:300]
             for b in _children(s, "bearer") + _children(s, "serviceID"):
                 pb = parse_bearer_id(b.get("id"))
+                fm = None if pb else parse_fm_bearer(b.get("id"))
                 if pb:
                     svc["bearers"].append(pb)
+                elif fm:
+                    svc.setdefault("fm", []).append(fm)
                 elif b.get("id"):
-                    warnings.append(f"{name}: bearer '{b.get('id')}' is not a DAB bearer - skipped")
-            if not svc["bearers"]:
+                    warnings.append(f"{name}: bearer '{b.get('id')}' is not a DAB or FM bearer - skipped")
+            svc["bearers"] += svc.pop("fm", [])  # DAB first
+            if not any(x.get("type", "dab") == "dab" for x in svc["bearers"]):
                 warnings.append(f"{name}: no DAB bearer - imported but will be skipped until a SId is set")
             services.append(svc)
-    if not ensemble and services and services[0]["bearers"]:
-        b = services[0]["bearers"][0]
-        ensemble = {"ecc": b["ecc"], "eid": b["eid"]}
+    first_dab = next((b for s in services for b in s["bearers"] if b.get("type", "dab") == "dab"), None)
+    if not ensemble and first_dab:
+        ensemble = {"ecc": first_dab["ecc"], "eid": first_dab["eid"]}
     return {"ensemble": ensemble, "services": services, "warnings": warnings, "fixes": fixes}
 
 
