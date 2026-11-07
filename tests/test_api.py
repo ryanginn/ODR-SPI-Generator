@@ -294,7 +294,7 @@ class ApiTest(unittest.TestCase):
         tpls = self.call("get", "/api/feed-templates")[1]
         self.assertEqual({t["name"] for t in tpls},
                          {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)", "Rayo / Planet Radio (Bauer)",
-                          "Järviradio (published Google Doc)"})
+                          "Järviradio (published Google Doc)", "Sea FM (WordPress radio theme)"})
         coast = next(t for t in tpls if t["name"] == "Coast FM")
         new = dict(coast["definition"], name="My API")
         st, body = self.call("post", "/api/feed-templates", {"definition": new})
