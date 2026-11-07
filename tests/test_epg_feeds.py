@@ -40,7 +40,27 @@ def rtv_json(day):
 
 class TemplateTest(unittest.TestCase):
     def test_samples_are_valid(self):
-        self.assertEqual(set(SAMPLES), {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)"})
+        self.assertEqual(set(SAMPLES), {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)", "Rayo / Planet Radio (Bauer)"})
+
+    def test_rayo_week(self):
+        # shape of listenapi.planetradio.co.uk/api9.2/schedule/<code>/today/+7 days: {date: [shows]}
+        body = json.dumps({
+            "2026-11-07": [
+                {"episodeid": 1, "showid": 15396, "start": "2026-11-07T00:00:00+02:00", "title": "Paras Sekoitus",
+                 "shortdesc": "Radio Nova - paras sekoitus.", "duration": 28800, "record": 0},
+                {"episodeid": 2, "showid": 15395, "start": "2026-11-07T16:00:00+02:00",
+                 "title": "Waldon Lauantailöylyt", "shortdesc": "Ladies and gentlemen!", "duration": 10800}],
+            "2026-11-08": [
+                {"episodeid": 3, "showid": 15396, "start": "2026-11-08T00:00:00+02:00", "title": "Paras Sekoitus",
+                 "shortdesc": None, "duration": 36000}],
+        }).encode()
+        seen = []
+        progs = ft.run(SAMPLES["Rayo / Planet Radio (Bauer)"], SAMPLES["Rayo / Planet Radio (Bauer)"]["example_url"],
+                       7, ZoneInfo("Europe/Helsinki"), lambda u: seen.append(u) or body, today=date(2026, 11, 7))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual([p["title"] for p in progs], ["Paras Sekoitus", "Waldon Lauantailöylyt", "Paras Sekoitus"])
+        self.assertEqual(progs[1]["end"], "2026-11-07T19:00:00+02:00")  # start + duration
+        self.assertEqual(progs[2]["description"], "")
 
     def test_day_url(self):
         t = SAMPLES["MPBNL"]

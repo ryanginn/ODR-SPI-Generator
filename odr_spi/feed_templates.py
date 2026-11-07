@@ -66,6 +66,16 @@ SAMPLES = [
         "title": "title", "description_field": "napovednik", "start": "start_time", "end": "end_time",
         "duration": "duration", "days": "", "time_format": "clock",
     },
+    {
+        "name": "Rayo / Planet Radio (Bauer)",
+        "description": "Bauer Media listen API behind rayo.fi, planetradio.co.uk and the Rayo apps. One request covers "
+                       "the coming week: put the station code in the URL (e.g. nfi = Radio Nova). Use +14%20days "
+                       "for two weeks.",
+        "example_url": "https://listenapi.planetradio.co.uk/api9.2/schedule/nfi/today/+7%20days",
+        "fetch": "once", "day_param": "", "day_value": "", "items_path": "{date}",
+        "title": "title", "description_field": "shortdesc", "start": "start", "end": "",
+        "duration": "duration", "days": "", "time_format": "iso",
+    },
 ]
 
 

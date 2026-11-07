@@ -120,7 +120,7 @@ Per station, under **EPG**:
 - **Which fields to use**: title, description, start, end or duration, and an optional weekday filter. `a|b` tries `a` then `b`.
 - **How times are written**: clock times on that day (`24:00` = midnight, and shows past midnight are handled), local date-times, ISO 8601 or Unix timestamps.
 
-**Test** fetches a URL and shows exactly what will be broadcast, before you save. **Copy JSON** and **Import JSON** let you share templates between installations. Three samples are included: **MPBNL**, **Coast FM** and **Radio Slovenija (RTV SLO)**. *Restore samples* brings back any you deleted. Templates are pure data and are never run as code. Every request goes through the same SSRF-protected fetcher as logo URLs.
+**Test** fetches a URL and shows exactly what will be broadcast, before you save. **Copy JSON** and **Import JSON** let you share templates between installations. Four samples are included: **MPBNL**, **Coast FM**, **Radio Slovenija (RTV SLO)** and **Rayo / Planet Radio (Bauer)**. The last one works for any Bauer station by its station code, e.g. `.../api9.2/schedule/nfi/today/+7%20days` for Radio Nova. *Restore samples* brings back any you deleted. Templates are pure data and are never run as code. Every request goes through the same SSRF-protected fetcher as logo URLs.
 
 ### Importing legacy SPI / XSI XML
 

@@ -292,7 +292,8 @@ class ApiTest(unittest.TestCase):
     def test_feed_templates(self):
         self.login_admin()
         tpls = self.call("get", "/api/feed-templates")[1]
-        self.assertEqual({t["name"] for t in tpls}, {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)"})
+        self.assertEqual({t["name"] for t in tpls},
+                         {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)", "Rayo / Planet Radio (Bauer)"})
         coast = next(t for t in tpls if t["name"] == "Coast FM")
         new = dict(coast["definition"], name="My API")
         st, body = self.call("post", "/api/feed-templates", {"definition": new})
@@ -331,6 +332,18 @@ class ApiTest(unittest.TestCase):
                                    client=oc, csrf=ocsrf)[0], 403)
         self.assertEqual(self.call("post", "/api/feed-templates/test", {"definition": new, "url": "https://x.y"},
                                    client=oc, csrf=ocsrf)[0], 403)
+
+    def test_new_samples_added_once(self):
+        # an install from before the Rayo sample existed: the first three seeded, one deleted by the user
+        db.x("DELETE FROM feed_templates WHERE name IN ('Rayo / Planet Radio (Bauer)', 'Coast FM')")
+        db.set_meta("samples_seeded", json.dumps(["MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)"]))
+        db.init(self.cfg["data_dir"])
+        names = {r["name"] for r in db.q("SELECT name FROM feed_templates")}
+        self.assertIn("Rayo / Planet Radio (Bauer)", names)   # new sample arrives
+        self.assertNotIn("Coast FM", names)                   # deleted sample stays deleted
+        db.x("DELETE FROM feed_templates WHERE name = 'Rayo / Planet Radio (Bauer)'")
+        db.init(self.cfg["data_dir"])
+        self.assertNotIn("Rayo / Planet Radio (Bauer)", {r["name"] for r in db.q("SELECT name FROM feed_templates")})
 
     def test_legacy_mpbnl_feed_type_is_migrated(self):
         self.login_admin()
