@@ -59,7 +59,49 @@ class BearerImportTest(unittest.TestCase):
 class TemplateTest(unittest.TestCase):
     def test_samples_are_valid(self):
         self.assertEqual(set(SAMPLES), {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)", "Rayo / Planet Radio (Bauer)",
-                                        "Järviradio (published Google Doc)"})
+                                        "Järviradio (published Google Doc)", "Sea FM (WordPress radio theme)"})
+
+    def test_parse_days(self):
+        cases = {"Monday-Thursday": {0, 1, 2, 3}, "Friday": {4}, "ma-pe": {0, 1, 2, 3, 4}, "la–su": {5, 6},
+                 "Monday to Friday": {0, 1, 2, 3, 4}, "arkisin": {0, 1, 2, 3, 4}, "Weekends": {5, 6},
+                 "lauantaisin": {5}, "Fri-Mon": {4, 5, 6, 0}, "Mon, Wed & Fri": {0, 2, 4}, "Päivittäin": set(range(7)),
+                 "måndag till fredag": {0, 1, 2, 3, 4}, "Samstag": {5}, "": set(), "soon": set()}
+        for text, want in cases.items():
+            self.assertEqual(ft.parse_days(text), want, text)
+
+    def test_html_timetable(self):
+        def item(title, time, day, desc):
+            return f"""<div class="col"><div class="qt-part-archive-item qt-part-show-schedule-day-item ">
+              <h4 class="qt-item-title qt-title"><a href="#" class="qt-t">{title}</a></h4>
+              <p class="qt-item-det"><span class="qt-time">{time}</span><span class="qt-day qt-capfont">{day}</span>
+              <img src="x.jpg"><div class="qt-more"><p class="qt-ellipsis-2">{desc}</p></div>
+              <p class="qt-item-det qt-accent"><span class="qt-time">99:99</span><span class="qt-day">Sunday</span></p>
+              </div></div>"""
+        page = ("<html><body><p>unclosed paragraph<div>" + item("Night", "00:00", "Monday-Thursday", "Overnight")
+                + item("Aamu", "06:00", "Monday-Thursday", "Mornings.[...]") + item("Late", "21:00", "Friday", "x")
+                + item("Friday Night", "22:00", "Friday", "")
+                + item("Party", "18:00 - 21:00", "Friday", "Live &amp; loud") + item("Bad", "", "Friday", "no time")
+                + item("Mystery", "10:00", "Someday", "unknown days") + "</div></body></html>").encode()
+        t = SAMPLES["Sea FM (WordPress radio theme)"]
+        shows = ft.parse_html_timetable(page, t)
+        self.assertEqual([s["title"] for s in shows], ["Night", "Aamu", "Late", "Friday Night", "Party"])
+        self.assertEqual(shows[0]["days"], {0, 1, 2, 3})  # the first time/day element wins
+        self.assertEqual(shows[1]["description"], "Mornings.")  # "[...]" removed
+        progs = ft.run(t, "https://example.com/ohjelma/", 7, timezone.utc, lambda u: page, today=date(2026, 11, 9))
+        friday = [p for p in progs if p["start"].startswith("2026-11-13")]
+        self.assertEqual([(p["start"][11:16], p["end"][11:16], p["title"]) for p in friday],
+                         [("18:00", "21:00", "Party"), ("21:00", "22:00", "Late"), ("22:00", "23:00", "Friday Night")])  # nothing later in the window: one hour
+        self.assertEqual(friday[0]["description"], "Live & loud")
+        self.assertTrue(progs[0]["start"].endswith("+02:00"))  # Europe/Helsinki
+        self.assertEqual(sum(p["title"] == "Night" for p in progs), 4)  # Mon-Thu in the week
+
+    def test_html_template_validation(self):
+        base = {"name": "x", "format": "html", "fetch": "once", "html_item": "a", "html_title": "b", "html_time": "c"}
+        ft.validate(base)
+        for bad in ({"html_item": ""}, {"html_title": "two classes"}, {"html_time": "x\" onload=\""},
+                    {"fetch": "per_date", "day_value": "{date}"}):
+            with self.assertRaises(ft.TemplateError, msg=bad):
+                ft.validate(dict(base, **bad))
 
     def test_text_listing(self):
         doc = """<html><head><title>x</title><style>p{color:red}</style></head><body>

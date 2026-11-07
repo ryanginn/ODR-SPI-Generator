@@ -1416,7 +1416,8 @@ const FETCH_HELP = {
 };
 const TIME_FORMATS = [["clock", "Clock time on that day (HH:MM or HH:MM:SS, 24:00 = midnight)"], ["datetime", "Local date and time (YYYY-MM-DD HH:MM:SS)"],
   ["iso", "ISO 8601 with offset (2026-10-27T07:00:00+01:00)"], ["unix", "Unix timestamp (seconds)"]];
-const BLANK_TEMPLATE = { name: "", description: "", example_url: "", format: "json", timezone: "", title_split: "", fetch: "per_weekday", day_param: "day", day_value: "{weekday}",
+const BLANK_TEMPLATE = { name: "", description: "", example_url: "", format: "json", timezone: "", title_split: "",
+  html_item: "", html_title: "", html_time: "", html_days: "", html_description: "", fetch: "per_weekday", day_param: "day", day_value: "{weekday}",
   items_path: "", title: "title", description_field: "description", start: "start", end: "end", duration: "", days: "", time_format: "clock" };
 
 async function pageTemplates(root) {
@@ -1436,7 +1437,7 @@ async function pageTemplates(root) {
       h("tbody", null, tpls.map((t) => h("tr", { class: "click", onclick: () => templateEditor(t) },
         h("td", null, h("div", { class: "row" }, h("b", null, t.name), t.sample ? h("span", { class: "chip accent" }, "Sample") : null),
           h("div", { class: "small muted" }, t.definition.description)),
-        h("td", { class: "nowrap small" }, t.definition.format === "text" ? "Text listing" : (FETCH_MODES.find((m) => m[0] === t.definition.fetch) || [, ""])[1]),
+        h("td", { class: "nowrap small" }, t.definition.format === "text" ? "Text listing" : t.definition.format === "html" ? "HTML timetable" : (FETCH_MODES.find((m) => m[0] === t.definition.fetch) || [, ""])[1]),
         h("td", { class: "nowrap" }, t.used_by ? `${t.used_by} station(s)` : h("span", { class: "muted" }, "—")),
         h("td", { class: "nowrap" }, iconBtn("copy", "Copy as JSON", (e) => { e.stopPropagation(); copyText(JSON.stringify(t.definition, null, 2)); }),
           iconBtn("plus", "Duplicate", (e) => { e.stopPropagation(); templateEditor({ definition: { ...t.definition, name: `${t.definition.name} (copy)` } }); })))))))
@@ -1468,7 +1469,10 @@ function templateEditor(t) {
     title: inp(d.title, { class: "mono" }), description_field: inp(d.description_field, { class: "mono" }),
     start: inp(d.start, { class: "mono" }), end: inp(d.end, { class: "mono" }), duration: inp(d.duration, { class: "mono", placeholder: "(optional, seconds)" }),
     days: inp(d.days, { class: "mono", placeholder: "(optional)" }), time_format: sel(d.time_format, TIME_FORMATS),
-    format: sel(d.format, [["json", "JSON API"], ["text", "Text listing (web page or published document)"]]),
+    format: sel(d.format, [["json", "JSON API"], ["text", "Text listing (web page or published document)"], ["html", "HTML timetable (weekly, by CSS class)"]]),
+    html_item: inp(d.html_item, { class: "mono", placeholder: "show-item" }), html_title: inp(d.html_title, { class: "mono", placeholder: "show-title" }),
+    html_time: inp(d.html_time, { class: "mono", placeholder: "show-time" }), html_days: inp(d.html_days, { class: "mono", placeholder: "(optional)" }),
+    html_description: inp(d.html_description, { class: "mono", placeholder: "(optional)" }),
     timezone: inp(d.timezone, { list: "tzlist-tpl", placeholder: "Server setting" }),
     title_split: inp(d.title_split, { placeholder: " puh.| toim." }),
   };
@@ -1479,13 +1483,20 @@ function templateEditor(t) {
   const jsonBox = h("div", { class: "stack" });
   const textBox = h("div", { class: "stack" },
     h("div", { class: "small muted" }, "A line containing a date (e.g. LAUANTAI 07.11.2026) starts each day; lines starting with a time (9.30 or 09:30) start programmes; other lines are added to the description of the programme above them. One request covers the whole listing."),
-    field("Move text after these markers to the description", f.title_split, { hint: "Separate markers with |, e.g. \" puh.| toim.\" turns \"Toiveet puh. 0700-...\" into the title \"Toiveet\"." }));
+  );
+  const splitField = field("Move text after these markers to the description", f.title_split, { hint: "Separate markers with |, e.g. \" puh.| toim.\" turns \"Toiveet puh. 0700-...\" into the title \"Toiveet\"." });
+  const htmlBox = h("div", { class: "stack" },
+    h("div", { class: "small muted" }, "For a weekly timetable on a web page. Use your browser's Inspect tool on one programme and copy the CSS class of the element around it and of its title, time and days. The time can be \"06:00\" or \"06:00 - 10:00\"; days like \"Monday-Thursday\", \"ma-pe\", \"arkisin\" or \"Weekends\" (English, Finnish, Swedish, German). Without an end time a programme runs until the next one."),
+    h("div", { class: "grid-3" }, field("Programme element class", f.html_item), field("Title class", f.html_title), field("Time class", f.html_time)),
+    h("div", { class: "grid-2" }, field("Days class", f.html_days, { hint: "Empty = every day" }), field("Description class", f.html_description)));
   const syncFetch = () => {
-    const text = f.format.value === "text";
-    if (text) f.fetch.value = "once";
+    const fmt = f.format.value;
+    if (fmt !== "json") f.fetch.value = "once";
     dayBox.classList.toggle("hidden", f.fetch.value === "once");
-    jsonBox.classList.toggle("hidden", text);
-    textBox.classList.toggle("hidden", !text);
+    jsonBox.classList.toggle("hidden", fmt !== "json");
+    textBox.classList.toggle("hidden", fmt !== "text");
+    htmlBox.classList.toggle("hidden", fmt !== "html");
+    splitField.classList.toggle("hidden", fmt === "json");
   };
   f.fetch.addEventListener("change", syncFetch); f.format.addEventListener("change", syncFetch);
 
@@ -1513,7 +1524,7 @@ function templateEditor(t) {
       h("div", { class: "grid-2" }, field("Name", f.name, { max: 64 }), field("Example URL", f.example_url)),
       field("Description", f.description, { max: 500 }),
       h("div", { class: "grid-2" }, field("Format", f.format), field("Times are in timezone", f.timezone, { hint: "Leave empty to use the server's timezone." })), tzList,
-      textBox,
+      textBox, htmlBox, splitField,
       put(jsonBox,
         section("Request", field("How to fetch", f.fetch), dayBox),
         section("Response", h("div", { class: "small muted" }, "Dotted paths into the JSON, e.g. response.items or show.name. Use a|b to try a then b. The items path may contain day tokens, e.g. {weekday_lower}."),
