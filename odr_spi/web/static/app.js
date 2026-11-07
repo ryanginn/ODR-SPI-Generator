@@ -736,7 +736,7 @@ function logoTile(name, logos, lg = false) {
 
 function stationProblems(s) {
   const p = [];
-  if (!s.bearers.length) p.push("No SId");
+  if (!dabOf(s).length) p.push("No SId");
   if (!s.logos.some((l) => l.width === 32 && l.height === 32 && l.file)) p.push("No 32×32 logo");
   if (s.logos.some((l) => l.fetch_status === "error")) p.push("Logo URL failing");
   if (s.epg_feed_status && s.epg_feed_status.startsWith("error")) p.push("EPG feed failing");
@@ -763,7 +763,7 @@ async function pageStationList(root) {
     clear(grid);
     const q = stationFilter.q.toLowerCase();
     const list = services.filter((s) => {
-      if (q && ![s.medium_name, s.short_name, s.long_name, ...s.bearers.map((b) => b.sid)].some((x) => (x || "").toLowerCase().includes(q))) return false;
+      if (q && ![s.medium_name, s.short_name, s.long_name, ...s.bearers.map((b) => b.sid || b.pi), ...s.bearers.filter(isFm).map((b) => b.freq)].some((x) => (x || "").toLowerCase().includes(q))) return false;
       if (stationFilter.tab === "issues") return stationProblems(s).length > 0;
       if (stationFilter.tab === "epg") return s.epg_enabled;
       if (stationFilter.tab === "off") return !s.enabled;
@@ -791,10 +791,10 @@ async function pageStationList(root) {
 
 function stationCard(s) {
   const problems = stationProblems(s);
-  const sids = s.bearers.map((b) => b.sid.toUpperCase() + (b.scids ? "." + b.scids : ""));
+  const sids = s.bearers.map(bearerLabel);
   let pill;
   if (!s.enabled) pill = h("span", { class: "pill muted" }, "Disabled");
-  else if (!s.bearers.length) pill = h("span", { class: "pill red" }, icon("wifiOff"), "No SId");
+  else if (!dabOf(s).length) pill = h("span", { class: "pill red" }, icon("wifiOff"), "No SId");
   else pill = h("span", { class: "pill green" }, h("i", { class: "dot green" }), "In carousel");
   const strip = h("div", { class: "logo-strip" }, LOGO_SIZES.map(([w, hh]) => {
     const l = s.logos.find((x) => x.width === w && x.height === hh);
@@ -818,7 +818,7 @@ function stationCard(s) {
     h("div", { class: "stack tight" }, h("div", { class: "row" }, h("div", { class: "stat-line" }, h("b", null, have), `of ${LOGO_SIZES.length} logo sizes`),
       h("span", { class: "spacer" }), h("span", { class: "small muted" }, s.epg_enabled ? `EPG · ${s.programme_count} entries${s.epg_feed_url ? " + feed" : ""}` : "EPG off")), meter),
     h("div", { class: "sc-foot" },
-      sids.length ? sids.slice(0, 3).map((x) => h("span", { class: "chip mono" }, "SId " + x)) : null,
+      sids.length ? sids.slice(0, 3).map((x) => h("span", { class: "chip mono" }, x)) : null,
       problems.filter((p) => p !== "No SId").map((p) => h("span", { class: "chip red" }, icon("alert"), p)),
       s.logos.some((l) => l.source === "url") ? h("span", { class: "chip blue" }, icon("link"), "URL") : null,
       h("span", { class: "when" }, "Updated " + fmtAgo(s.updated_at))));
@@ -854,7 +854,7 @@ async function pageStationDetail(root, id, tab) {
   put(root, 
     h("div", { class: "page-head" }, iconBtn("arrowLeft", "Back to stations", () => { location.hash = "#/stations"; }), logoTile(s.medium_name, s.logos, true),
       h("div", { class: "grow" }, h("h1", null, s.medium_name || "(unnamed)"),
-        h("p", null, [s.short_name, s.bearers.map((b) => `SId ${b.sid.toUpperCase()}`).join(" · ")].filter(Boolean).join(" · ") || "No service ID")),
+        h("p", null, [s.short_name, s.bearers.map(bearerLabel).join(" · ")].filter(Boolean).join(" · ") || "No service ID")),
       s.enabled ? h("span", { class: "pill green" }, "Enabled") : h("span", { class: "pill muted" }, "Disabled")),
     tabs, body);
   if (tab === "overview") stationOverview(body, s);
@@ -882,26 +882,43 @@ function genrePicker(initial, disabled) {
   return { el: h("div", { class: "stack tight" }, list, disabled ? null : select), get: () => values };
 }
 
+// FM bearers carry {type: "fm", ecc, pi, freq}; DAB bearers have no type (or "dab")
+const isFm = (b) => b.type === "fm";
+const dabOf = (s) => s.bearers.filter((b) => !isFm(b));
+const bearerLabel = (b) => (isFm(b) ? `FM ${b.freq}` : `SId ${b.sid.toUpperCase()}${b.scids ? "." + b.scids : ""}`);
+
 function bearerEditor(initial, disabled) {
   const rows = [];
   const wrap = h("div", { class: "stack tight" });
   const table = h("div", { class: "stack tight" });
   const add = (b = { ecc: "", eid: "", sid: "", scids: 0 }) => {
+    const fm = isFm(b);
+    const type = sel(fm ? "fm" : "dab", [["dab", "DAB"], ["fm", "FM"]], { disabled, "aria-label": "Bearer type" });
     const r = {
+      type,
       ecc: inp(b.ecc, { class: "mono", placeholder: "ens", maxlength: 2, disabled, "aria-label": "ECC" }),
       eid: inp(b.eid, { class: "mono", placeholder: "ens", maxlength: 4, disabled, "aria-label": "EId" }),
       sid: inp(b.sid, { class: "mono", placeholder: "c586", maxlength: 4, disabled, "aria-label": "SId" }),
       scids: h("input", { type: "number", min: 0, max: 15, value: b.scids || 0, disabled, "aria-label": "SCIdS" }),
+      pi: inp(b.pi, { class: "mono", placeholder: "PI, e.g. 6209", maxlength: 4, disabled, "aria-label": "PI code" }),
+      freq: inp(b.freq, { placeholder: "MHz, e.g. 106.2", inputmode: "decimal", maxlength: 6, disabled, "aria-label": "Frequency (MHz)" }),
     };
-    r.el = h("div", { class: "grid-4" }, r.ecc, r.eid, r.sid, h("div", { class: "row" }, r.scids,
-      disabled ? null : iconBtn("trash", "Remove bearer", () => { rows.splice(rows.indexOf(r), 1); r.el.remove(); })));
+    const dabCells = h("div", { class: "bearer-fields" }, r.eid, r.sid, r.scids);
+    const fmCells = h("div", { class: "bearer-fields fm" }, r.pi, r.freq);
+    const sync = () => { const f = type.value === "fm"; dabCells.classList.toggle("hidden", f); fmCells.classList.toggle("hidden", !f); };
+    type.addEventListener("change", sync); sync();
+    r.el = h("div", { class: "bearer-row" }, type, r.ecc, dabCells, fmCells,
+      disabled ? h("span") : iconBtn("trash", "Remove bearer", () => { rows.splice(rows.indexOf(r), 1); r.el.remove(); }));
     rows.push(r); table.appendChild(r.el);
   };
   initial.forEach(add);
   if (!initial.length && !disabled) add();
-  put(wrap, h("div", { class: "grid-4 small muted" }, h("span", null, "ECC"), h("span", null, "EId"), h("span", null, "SId"), h("span", null, "SCIdS")), table,
+  put(wrap, h("div", { class: "small muted" }, "DAB: ECC, EId, SId, SCIdS · FM: ECC, PI code, frequency. Empty ECC/EId use the ensemble's."), table,
     disabled ? null : h("div", null, btn("Add bearer", { cls: "sm ghost", icon: "plus", onclick: () => add() })));
-  return { el: wrap, get: () => rows.map((r) => ({ ecc: r.ecc.value.trim(), eid: r.eid.value.trim(), sid: r.sid.value.trim(), scids: +r.scids.value || 0 })).filter((b) => b.sid) };
+  return { el: wrap, get: () => rows.map((r) => (r.type.value === "fm"
+    ? { type: "fm", ecc: r.ecc.value.trim(), pi: r.pi.value.trim(), freq: r.freq.value.trim() }
+    : { ecc: r.ecc.value.trim(), eid: r.eid.value.trim(), sid: r.sid.value.trim(), scids: +r.scids.value || 0 }))
+    .filter((b) => (b.type === "fm" ? b.pi || b.freq : b.sid)) };
 }
 
 function stationOverview(root, s) {
@@ -930,7 +947,7 @@ function stationOverview(root, s) {
           field("Website", f.website), field("Genres", genres.el)))),
     h("div", { class: "section-gap" }),
     h("div", { class: "card" }, h("div", { class: "card-head" }, h("div", null, h("h2", null, "Bearers"),
-      h("p", null, "Where this station is on air. The first one is the primary SId. Leave ECC/EId empty to use the ensemble's; SCIdS > 0 for secondary components."))),
+      h("p", null, "Where this station is on air. The first DAB bearer is the primary SId; SCIdS > 0 for secondary components. Add FM bearers so receivers know the station's FM frequency."))),
       h("div", { class: "card-body stack" }, bearers.el, core ? enabled.el : null,
         s.owners ? h("div", { class: "small muted" }, "Station owners: ", s.owners.length ? s.owners.join(", ") : "none - assign them under Users") : null),
       h("div", { class: "card-foot" }, core ? btn("Delete station", { cls: "danger", icon: "trash", onclick: async () => {
@@ -1350,7 +1367,7 @@ function userEditor(u, services) {
   const disabled = toggle("Account disabled", !!u.disabled);
   const picks = new Set(u.services);
   const svcList = h("div", { class: "list-check" }, services.length ? services.map((s) => {
-    const t = toggle(s.medium_name + (s.bearers[0] ? `  ·  ${s.bearers[0].sid.toUpperCase()}` : ""), picks.has(s.id));
+    const t = toggle(s.medium_name + (dabOf(s)[0] ? `  ·  ${dabOf(s)[0].sid.toUpperCase()}` : ""), picks.has(s.id));
     t.box.addEventListener("change", () => (t.box.checked ? picks.add(s.id) : picks.delete(s.id)));
     return t.el;
   }) : h("span", { class: "muted small" }, "No stations yet."));
@@ -1399,7 +1416,7 @@ const FETCH_HELP = {
 };
 const TIME_FORMATS = [["clock", "Clock time on that day (HH:MM or HH:MM:SS, 24:00 = midnight)"], ["datetime", "Local date and time (YYYY-MM-DD HH:MM:SS)"],
   ["iso", "ISO 8601 with offset (2026-10-27T07:00:00+01:00)"], ["unix", "Unix timestamp (seconds)"]];
-const BLANK_TEMPLATE = { name: "", description: "", example_url: "", fetch: "per_weekday", day_param: "day", day_value: "{weekday}",
+const BLANK_TEMPLATE = { name: "", description: "", example_url: "", format: "json", timezone: "", title_split: "", fetch: "per_weekday", day_param: "day", day_value: "{weekday}",
   items_path: "", title: "title", description_field: "description", start: "start", end: "end", duration: "", days: "", time_format: "clock" };
 
 async function pageTemplates(root) {
@@ -1419,7 +1436,7 @@ async function pageTemplates(root) {
       h("tbody", null, tpls.map((t) => h("tr", { class: "click", onclick: () => templateEditor(t) },
         h("td", null, h("div", { class: "row" }, h("b", null, t.name), t.sample ? h("span", { class: "chip accent" }, "Sample") : null),
           h("div", { class: "small muted" }, t.definition.description)),
-        h("td", { class: "nowrap small" }, (FETCH_MODES.find((m) => m[0] === t.definition.fetch) || [, ""])[1]),
+        h("td", { class: "nowrap small" }, t.definition.format === "text" ? "Text listing" : (FETCH_MODES.find((m) => m[0] === t.definition.fetch) || [, ""])[1]),
         h("td", { class: "nowrap" }, t.used_by ? `${t.used_by} station(s)` : h("span", { class: "muted" }, "—")),
         h("td", { class: "nowrap" }, iconBtn("copy", "Copy as JSON", (e) => { e.stopPropagation(); copyText(JSON.stringify(t.definition, null, 2)); }),
           iconBtn("plus", "Duplicate", (e) => { e.stopPropagation(); templateEditor({ definition: { ...t.definition, name: `${t.definition.name} (copy)` } }); })))))))
@@ -1451,12 +1468,26 @@ function templateEditor(t) {
     title: inp(d.title, { class: "mono" }), description_field: inp(d.description_field, { class: "mono" }),
     start: inp(d.start, { class: "mono" }), end: inp(d.end, { class: "mono" }), duration: inp(d.duration, { class: "mono", placeholder: "(optional, seconds)" }),
     days: inp(d.days, { class: "mono", placeholder: "(optional)" }), time_format: sel(d.time_format, TIME_FORMATS),
+    format: sel(d.format, [["json", "JSON API"], ["text", "Text listing (web page or published document)"]]),
+    timezone: inp(d.timezone, { list: "tzlist-tpl", placeholder: "Server setting" }),
+    title_split: inp(d.title_split, { placeholder: " puh.| toim." }),
   };
+  const tzList = h("datalist", { id: "tzlist-tpl" }, (Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : []).map((z) => h("option", { value: z })));
   const collect = () => Object.fromEntries(Object.entries(f).map(([k, el]) => [k, el.value.trim()]));
   const dayBox = h("div", { class: "grid-2" }, field("Day query parameter", f.day_param, { hint: "Set on the URL for each day, or put {day} in the URL instead." }),
     field("Day value", f.day_value, { hint: "{weekday} Monday · {weekday_lower} monday · {weekday_short} Mon · {weekday_num} 1-7 · {date} 2026-10-27 · {yyyymmdd}" }));
-  const syncFetch = () => dayBox.classList.toggle("hidden", f.fetch.value === "once");
-  f.fetch.addEventListener("change", syncFetch); syncFetch();
+  const jsonBox = h("div", { class: "stack" });
+  const textBox = h("div", { class: "stack" },
+    h("div", { class: "small muted" }, "A line containing a date (e.g. LAUANTAI 07.11.2026) starts each day; lines starting with a time (9.30 or 09:30) start programmes; other lines are added to the description of the programme above them. One request covers the whole listing."),
+    field("Move text after these markers to the description", f.title_split, { hint: "Separate markers with |, e.g. \" puh.| toim.\" turns \"Toiveet puh. 0700-...\" into the title \"Toiveet\"." }));
+  const syncFetch = () => {
+    const text = f.format.value === "text";
+    if (text) f.fetch.value = "once";
+    dayBox.classList.toggle("hidden", f.fetch.value === "once");
+    jsonBox.classList.toggle("hidden", text);
+    textBox.classList.toggle("hidden", !text);
+  };
+  f.fetch.addEventListener("change", syncFetch); f.format.addEventListener("change", syncFetch);
 
   const testUrl = inp(d.example_url, { type: "url", placeholder: "URL to test with" });
   const results = h("div", { class: "stack" });
@@ -1481,11 +1512,14 @@ function templateEditor(t) {
     body: h("div", { class: "stack" },
       h("div", { class: "grid-2" }, field("Name", f.name, { max: 64 }), field("Example URL", f.example_url)),
       field("Description", f.description, { max: 500 }),
-      section("Request", field("How to fetch", f.fetch), dayBox),
-      section("Response", h("div", { class: "small muted" }, "Dotted paths into the JSON, e.g. response.items or show.name. Use a|b to try a then b. The items path may contain day tokens, e.g. {weekday_lower}."),
-        h("div", { class: "grid-2" }, field("Items path (list of shows)", f.items_path), field("Time format", f.time_format)),
-        h("div", { class: "grid-3" }, field("Title", f.title), field("Description", f.description_field), field("Weekdays filter", f.days, { hint: "Comma-separated weekday names on each show" })),
-        h("div", { class: "grid-3" }, field("Start", f.start), field("End", f.end), field("Duration", f.duration))),
+      h("div", { class: "grid-2" }, field("Format", f.format), field("Times are in timezone", f.timezone, { hint: "Leave empty to use the server's timezone." })), tzList,
+      textBox,
+      put(jsonBox,
+        section("Request", field("How to fetch", f.fetch), dayBox),
+        section("Response", h("div", { class: "small muted" }, "Dotted paths into the JSON, e.g. response.items or show.name. Use a|b to try a then b. The items path may contain day tokens, e.g. {weekday_lower}."),
+          h("div", { class: "grid-2" }, field("Items path (list of shows)", f.items_path), field("Time format", f.time_format)),
+          h("div", { class: "grid-3" }, field("Title", f.title), field("Description", f.description_field), field("Weekdays filter", f.days, { hint: "Comma-separated weekday names on each show" })),
+          h("div", { class: "grid-3" }, field("Start", f.start), field("End", f.end), field("Duration", f.duration)))),
       section("Test", h("div", { class: "row" }, testUrl, btn("Test", { icon: "play", onclick: runTest })), results)),
     foot: [isNew ? null : btn("Delete", { cls: "danger", icon: "trash", onclick: async () => {
       if (!(await confirmDialog(`Delete the template "${d.name}"?`, { danger: true, okText: "Delete" }))) return;
@@ -1500,6 +1534,7 @@ function templateEditor(t) {
       } catch (e) { /* toasted */ }
     } })],
   });
+  syncFetch();
 }
 
 function fmtLocal(iso) {

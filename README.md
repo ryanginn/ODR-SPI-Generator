@@ -82,6 +82,10 @@ Edits are saved immediately but **published only when someone clicks *Apply***. 
 
 The scheduled refresh (default: daily at 00:00, or every N hours) re-fetches URLs and feeds and rebuilds from the **last applied** state, so half-finished edits are never published by the timer. The scheduled rebuild also rolls the EPG window forward each day.
 
+### Bearers (DAB and FM)
+
+Each station lists where it is on air. **DAB** bearers are ECC, EId, SId and SCIdS; the first one is the station's primary SId. **FM** bearers are ECC, PI code and frequency, and are broadcast in the service information as `fm:<gcc>.<pi>.<frequency>`, e.g. `fm:6e1.6209.10620` for PI 6209 on 106.2 MHz in Finland. They tell hybrid and connected radios the station's FM frequency. Automatic DAB→FM switching in car radios comes from service linking and frequency information (FIG 0/6 and 0/21) in the ODR-DabMux configuration, not from SPI. The legacy XML importer keeps `fm:` bearers.
+
 ### Logos
 
 Each station (and the ensemble) has one slot per size:
@@ -120,7 +124,10 @@ Per station, under **EPG**:
 - **Which fields to use**: title, description, start, end or duration, and an optional weekday filter. `a|b` tries `a` then `b`.
 - **How times are written**: clock times on that day (`24:00` = midnight, and shows past midnight are handled), local date-times, ISO 8601 or Unix timestamps.
 
-**Test** fetches a URL and shows exactly what will be broadcast, before you save. **Copy JSON** and **Import JSON** let you share templates between installations. Three samples are included: **MPBNL**, **Coast FM** and **Radio Slovenija (RTV SLO)**. *Restore samples* brings back any you deleted. Templates are pure data and are never run as code. Every request goes through the same SSRF-protected fetcher as logo URLs.
+- **Or a text listing**: for stations that only publish their schedule as a web page or a published Google Doc. A line containing a date (`LAUANTAI 07.11.2026`) starts each day, lines starting with a time (`9.30 Title` or `09:30 Title`) start programmes, and any other line is added to the description of the programme above it. *Move text after these markers to the description* keeps phone numbers and credits out of titles, e.g. ` puh.| toim.`.
+- **Timezone**: the zone the times are written in, if it differs from the server's.
+
+**Test** fetches a URL and shows exactly what will be broadcast, before you save. **Copy JSON** and **Import JSON** let you share templates between installations. Five samples are included: **MPBNL**, **Coast FM**, **Radio Slovenija (RTV SLO)**, **Rayo / Planet Radio (Bauer)** and **Järviradio** (a text listing from a published Google Doc). The last one works for any Bauer station by its station code, e.g. `.../api9.2/schedule/nfi/today/+7%20days` for Radio Nova. *Restore samples* brings back any you deleted. Templates are pure data and are never run as code. Every request goes through the same SSRF-protected fetcher as logo URLs.
 
 ### Importing legacy SPI / XSI XML
 

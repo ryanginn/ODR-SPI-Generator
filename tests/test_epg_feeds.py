@@ -38,9 +38,87 @@ def rtv_json(day):
     ], "meta": {"name": "Val 202", "dates": [day]}}}).encode()
 
 
+class BearerImportTest(unittest.TestCase):
+    def test_fm_bearer_ids(self):
+        from odr_spi import importers
+        self.assertEqual(importers.parse_fm_bearer("fm:ce1.6209.10620"),
+                         {"type": "fm", "ecc": "e1", "pi": "6209", "freq": "106.2"})
+        self.assertEqual(importers.parse_fm_bearer("fm:2e3.2491.09850")["freq"], "98.5")
+        self.assertIsNone(importers.parse_fm_bearer("fm:ce1.6209.20000"))  # 200 MHz is not FM
+        xml = b"""<serviceInformation xmlns="http://www.worlddab.org/schemas/spi/31"><services id="e1c0de"><service>
+          <shortName>Nova</shortName><mediumName>Radio Nova</mediumName>
+          <bearer id="fm:ce1.6209.10620" cost="40"/><bearer id="dab:ce1.c0de.6209.0" cost="20"/>
+          <bearer id="http://stream.example/nova.mp3" cost="100"/></service></services></serviceInformation>"""
+        r = importers.parse_legacy_si(xml)
+        bearers = r["services"][0]["bearers"]
+        self.assertEqual([b.get("type", "dab") for b in bearers], ["dab", "fm"])  # DAB first
+        self.assertEqual(bearers[1]["pi"], "6209")
+        self.assertTrue(any("not a DAB or FM bearer" in w for w in r["warnings"]))  # the stream URL
+
+
 class TemplateTest(unittest.TestCase):
     def test_samples_are_valid(self):
-        self.assertEqual(set(SAMPLES), {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)"})
+        self.assertEqual(set(SAMPLES), {"MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)", "Rayo / Planet Radio (Bauer)",
+                                        "Järviradio (published Google Doc)"})
+
+    def test_text_listing(self):
+        doc = """<html><head><title>x</title><style>p{color:red}</style></head><body>
+        <p><span>Viikon 45 lintu: Pensaskerttu</span></p>
+        <p><span>LAUANTAI 07.11.2026</span></p>
+        <p><span>9.00 Nimip&auml;iv&auml;t</span></p>
+        <p><span>10.05 Lauantain toiveet puh. 0700-\u00ad88200 (10,16 &euro;/puh+mpm)</span></p>
+        <p><span>15.15 Kullan maailmanmarkkinahinnat t&auml;n&auml;&auml;n.</span></p>
+        <p><span>Kullan markkinahinnan tarjoaa Suomen Arvokierto.</span></p>
+        <p><span>23.00 J&auml;rviradio soi</span></p>
+        <p><span>SUNNUNTAI 08.11.2026 IS&Auml;NP&Auml;IV&Auml;</span></p>
+        <p><span>10.00 Jumalanpalvelus toim. Alavuden Helluntaiseurakunta</span></p>
+        <p><span>VK 46</span></p>
+        <p><span>MAANANTAI 09.11.2026</span></p>
+        <p><span>17.00 Klassisen musiikin salaisuudet,</span></p><p><span>seurassanne Henrik Lamberg</span></p>
+        <p><span>25.00 Not a time</span></p>
+        <p><span>MAANANTAI 16.11.2026</span></p><p><span>8.00 Outside the window</span></p>
+        </body></html>""".encode()
+        t = SAMPLES["Järviradio (published Google Doc)"]
+        progs = ft.run(t, "https://example.com/doc", 7, timezone.utc, lambda u: doc, today=date(2026, 11, 7))
+        self.assertEqual([p["title"] for p in progs], ["Nimipäivät", "Lauantain toiveet", "Kullan maailmanmarkkinahinnat tänään.",
+                                                      "Järviradio soi", "Jumalanpalvelus", "Klassisen musiikin salaisuudet"])
+        self.assertEqual(progs[0]["start"], "2026-11-07T09:00:00+02:00")  # template timezone, not the server's
+        self.assertEqual(progs[1]["description"], "puh. 0700-88200 (10,16 €/puh+mpm)")  # soft hyphen removed
+        self.assertEqual(progs[2]["description"], "Kullan markkinahinnan tarjoaa Suomen Arvokierto.")
+        self.assertEqual(progs[3]["end"], "2026-11-08T10:00:00+02:00")  # runs to the next programme
+        self.assertEqual(progs[4]["description"], "toim. Alavuden Helluntaiseurakunta")  # "VK 46" ignored
+        self.assertEqual(progs[5]["description"], "seurassanne Henrik Lamberg")
+
+    def test_text_listing_plain_text_and_colon_times(self):
+        body = "Monday 9.11.2026\n06:00 Breakfast\n07:30 News\n".encode()
+        t = ft.validate({"name": "plain", "format": "text", "fetch": "once"})
+        progs = ft.run(t, "https://example.com/x.txt", 7, timezone.utc, lambda u: body, today=date(2026, 11, 9))
+        self.assertEqual([(p["start"], p["title"]) for p in progs],
+                         [("2026-11-09T06:00:00+00:00", "Breakfast"), ("2026-11-09T07:30:00+00:00", "News")])
+        with self.assertRaises(ft.TemplateError):
+            ft.validate({"name": "x", "format": "text", "fetch": "per_date", "day_value": "{date}"})
+        with self.assertRaises(ft.TemplateError):
+            ft.validate({"name": "x", "format": "text", "fetch": "once", "timezone": "Mars/Olympus"})
+
+    def test_rayo_week(self):
+        # shape of listenapi.planetradio.co.uk/api9.2/schedule/<code>/today/+7 days: {date: [shows]}
+        body = json.dumps({
+            "2026-11-07": [
+                {"episodeid": 1, "showid": 15396, "start": "2026-11-07T00:00:00+02:00", "title": "Paras Sekoitus",
+                 "shortdesc": "Radio Nova - paras sekoitus.", "duration": 28800, "record": 0},
+                {"episodeid": 2, "showid": 15395, "start": "2026-11-07T16:00:00+02:00",
+                 "title": "Waldon Lauantailöylyt", "shortdesc": "Ladies and gentlemen!", "duration": 10800}],
+            "2026-11-08": [
+                {"episodeid": 3, "showid": 15396, "start": "2026-11-08T00:00:00+02:00", "title": "Paras Sekoitus",
+                 "shortdesc": None, "duration": 36000}],
+        }).encode()
+        seen = []
+        progs = ft.run(SAMPLES["Rayo / Planet Radio (Bauer)"], SAMPLES["Rayo / Planet Radio (Bauer)"]["example_url"],
+                       7, ZoneInfo("Europe/Helsinki"), lambda u: seen.append(u) or body, today=date(2026, 11, 7))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual([p["title"] for p in progs], ["Paras Sekoitus", "Waldon Lauantailöylyt", "Paras Sekoitus"])
+        self.assertEqual(progs[1]["end"], "2026-11-07T19:00:00+02:00")  # start + duration
+        self.assertEqual(progs[2]["description"], "")
 
     def test_day_url(self):
         t = SAMPLES["MPBNL"]

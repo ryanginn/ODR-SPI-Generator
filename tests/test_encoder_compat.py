@@ -82,6 +82,15 @@ class SiTest(unittest.TestCase):
              for sh, md, ecc, sid, ms in services])
         self.assertEqual(got, expected)
 
+    def test_fm_bearer_encoding(self):
+        si = spi_binary.service_information(
+            {"ecc": 0xE1, "eid": 0xC0DE, "short_name": "D", "medium_name": "D"},
+            [{"short_name": "N", "medium_name": "Nova", "bearers": [(0xE1, 0xC0DE, 0x6209, 0)],
+              "fm_bearers": ["fm:ce1.6209.10620"]}])
+        dab = bytes([0x2D, 8, 0x80, 6, 0x40, 0xE1, 0xC0, 0xDE, 0x62, 0x09])
+        fm = bytes([0x2D, 19, 0x80, 17]) + b"fm:ce1.6209.10620"
+        self.assertIn(dab + fm, si)
+
     def test_genre_encoding(self):
         self.assertEqual(spi_binary.genre_bytes("urn:tva:metadata:cs:ContentCS:2002:3.6.8"), b"\x03\x06\x08")
         self.assertIsNone(spi_binary.genre_bytes("urn:tva:metadata:cs:ContentCS:2002:10"))

@@ -267,20 +267,29 @@ def generate(snap, now=None):
     for svc in snap["services"]:
         if not svc["enabled"]:
             continue
-        bearers = []
+        bearers, fm_bearers = [], []
         for b in svc["bearers"]:
+            if b.get("type") == "fm":
+                try:
+                    pi = parse_hex(b["pi"], 16)
+                    ecc = parse_hex(b.get("ecc") or ens["ecc"], 8)
+                    fm_bearers.append(f"fm:{pi >> 12:x}{ecc:02x}.{pi:04x}.{round(float(b['freq']) * 100)}")
+                except (ValueError, KeyError, TypeError):
+                    warnings.append(f"{svc['medium_name']}: invalid FM bearer {b} skipped")
+                continue
             try:
                 bearers.append((parse_hex(b.get("ecc") or ens["ecc"], 8), parse_hex(b.get("eid") or ens["eid"], 16),
                                 parse_hex(b["sid"], 16), int(b.get("scids") or 0) & 0xF))
             except (ValueError, KeyError, TypeError):
                 warnings.append(f"{svc['medium_name']}: invalid bearer {b} skipped")
         if not bearers:
-            warnings.append(f"{svc['medium_name'] or svc['id']}: no valid bearer (SId) - service skipped")
+            warnings.append(f"{svc['medium_name'] or svc['id']}: no valid DAB bearer (SId) - service skipped")
             continue
         key = f"{bearers[0][2]:04x}"
         services.append({
             "short_name": svc["short_name"], "medium_name": svc["medium_name"], "long_name": svc["long_name"],
-            "bearers": bearers, "media": logo_objects(key, svc["logos"], svc["medium_name"] or key),
+            "bearers": bearers, "fm_bearers": fm_bearers,
+            "media": logo_objects(key, svc["logos"], svc["medium_name"] or key),
             "short_description": svc["short_description"], "long_description": svc["long_description"],
             "genres": svc["genres"], "links": [svc["website"]] if svc["website"] else [],
         })

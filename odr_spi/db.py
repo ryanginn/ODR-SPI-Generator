@@ -180,9 +180,7 @@ def init(data_dir):
     c.executescript(SCHEMA)
     for k, v in DEFAULT_SETTINGS.items():
         c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, json.dumps(v)))
-    if get_meta("templates_seeded") is None:
-        seed_sample_templates()
-        set_meta("templates_seeded", 1)
+    seed_new_samples()
     # feeds created before templates existed used the built-in "mpbnl" type
     mpbnl = q1("SELECT id FROM feed_templates WHERE name = 'MPBNL'")
     if mpbnl:
@@ -227,6 +225,27 @@ class transaction:
     def __exit__(self, exc_type, *_):
         conn().execute("ROLLBACK" if exc_type else "COMMIT")
         return False
+
+
+# samples present before per-name tracking existed
+_FIRST_SAMPLES = ["MPBNL", "Coast FM", "Radio Slovenija (RTV SLO)"]
+
+
+def seed_new_samples():
+    """Add sample templates introduced since the last start, once each, so a
+    sample the user deleted does not come back on its own."""
+    from .feed_templates import SAMPLES
+    seen = get_meta("samples_seeded")
+    if seen is None:
+        seen = json.dumps(_FIRST_SAMPLES if get_meta("templates_seeded") else [])
+    seen = set(json.loads(seen))
+    for t in SAMPLES:
+        if t["name"] not in seen:
+            if not q1("SELECT id FROM feed_templates WHERE name = ?", (t["name"],)):
+                x("INSERT INTO feed_templates(name, definition, sample, created_at, updated_at) VALUES (?,?,1,?,?)",
+                  (t["name"], json.dumps(t), time.time(), time.time()))
+            seen.add(t["name"])
+    set_meta("samples_seeded", json.dumps(sorted(seen)))
 
 
 def seed_sample_templates():

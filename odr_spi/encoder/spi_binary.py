@@ -150,7 +150,7 @@ def genres(hrefs) -> bytes:
 
 def service_information(ensemble: dict, services: list, originator="ODR") -> bytes:
     """ensemble: {ecc, eid, short_name, medium_name, media:[...]}
-    service: {short_name, medium_name, long_name, bearers:[(ecc,eid,sid,scids)],
+    service: {short_name, medium_name, long_name, bearers:[(ecc,eid,sid,scids)], fm_bearers:["fm:..."],
               media:[(url,mime,w,h)], short_description, long_description, genres, links}"""
     ens = [attr(0x80, ensemble_id(ensemble["ecc"], ensemble["eid"])),
            names(ensemble.get("short_name", ""), ensemble.get("medium_name", ""))]
@@ -158,6 +158,8 @@ def service_information(ensemble: dict, services: list, originator="ODR") -> byt
     for svc in services:
         parts = [names(svc.get("short_name", ""), svc.get("medium_name", ""), svc.get("long_name", ""))]
         parts += [el(T_BEARER, attr(0x80, content_id(*b))) for b in svc["bearers"]]
+        # non-DAB bearers are identified by their bearer URI, e.g. fm:ce1.6209.10620
+        parts += [el(T_BEARER, s(0x80, uri)) for uri in svc.get("fm_bearers", [])]
         parts += [multimedia(*m) for m in svc.get("media", [])]
         parts.append(descriptions(svc.get("short_description", ""), svc.get("long_description", "")))
         parts.append(genres(svc.get("genres", [])))

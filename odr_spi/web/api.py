@@ -77,10 +77,13 @@ def _date(v, label):
 def _bearers(v):
     if not isinstance(v, list) or len(v) > 8:
         raise ApiError("Bearers must be a list of at most 8 entries.")
-    out = []
+    out, fm = [], []
     for b in v:
         if not isinstance(b, dict):
             raise ApiError("Invalid bearer.")
+        if b.get("type") == "fm":
+            fm.append(_fm_bearer(b))
+            continue
         sid = str(b.get("sid", "")).strip().lower().removeprefix("0x")
         ecc = str(b.get("ecc") or "").strip().lower().removeprefix("0x")
         eid = str(b.get("eid") or "").strip().lower().removeprefix("0x")
@@ -97,7 +100,27 @@ def _bearers(v):
         if not 0 <= scids <= 15:
             raise ApiError("SCIdS must be 0-15.")
         out.append({"ecc": ecc, "eid": eid, "sid": sid, "scids": scids})
-    return out
+    return out + fm  # DAB first: the first DAB bearer is the station's primary SId
+
+
+def _fm_bearer(b):
+    pi = str(b.get("pi", "")).strip().lower().removeprefix("0x")
+    ecc = str(b.get("ecc") or "").strip().lower().removeprefix("0x")
+    if not HEX(4).match(pi) or pi == "0000":
+        raise ApiError("FM PI code must be 4 hex digits, e.g. 6209.")
+    if ecc and not HEX(2).match(ecc):
+        raise ApiError("ECC must be 2 hex digits, e.g. e1.")
+    try:
+        mhz = float(str(b.get("freq", "")).replace(",", "."))
+    except ValueError:
+        mhz = 0
+    if not 76.0 <= mhz <= 108.0:
+        raise ApiError("FM frequency must be in MHz, between 76.0 and 108.0 (e.g. 106.2).")
+    return {"type": "fm", "ecc": ecc, "pi": pi, "freq": f"{round(mhz * 100) / 100:g}"}
+
+
+def _primary_sid(bearers):
+    return next((b["sid"] for b in bearers if b.get("type", "dab") == "dab"), None)
 
 
 def _genres(v):
@@ -1134,12 +1157,13 @@ def _import_summary(iid, imp):
                               "error": imp["files"].get(key, {}).get("error")})
     existing = {}
     for r in db.q("SELECT id, bearers FROM services"):
-        for b in json.loads(r["bearers"])[:1]:
-            existing[b["sid"]] = r["id"]
+        if _primary_sid(json.loads(r["bearers"])):
+            existing[_primary_sid(json.loads(r["bearers"]))] = r["id"]
     services = [{"short_name": s["short_name"], "medium_name": s["medium_name"],
-                 "sid": s["bearers"][0]["sid"] if s["bearers"] else None,
+                 "sid": _primary_sid(s["bearers"]),
                  "bearers": len(s["bearers"]), "logos": len(s["logos"]), "genres": len(s["genres"]),
-                 "exists": bool(s["bearers"]) and s["bearers"][0]["sid"] in existing} for s in p["services"]]
+                 "exists": bool(_primary_sid(s["bearers"])) and _primary_sid(s["bearers"]) in existing}
+                for s in p["services"]]
     return {"id": iid, "kind": imp["kind"], "ensemble": p.get("ensemble"), "services": services,
             "warnings": p.get("warnings", []), "fixes": p.get("fixes", []), "local_logos": local,
             "remote_logos": sum(1 for s in p["services"] for l in s["logos"] if l["remote"])}
@@ -1279,8 +1303,8 @@ def import_commit(iid):
             db.x("DELETE FROM services")
         existing = {}
         for r in db.q("SELECT id, bearers FROM services"):
-            for b in json.loads(r["bearers"])[:1]:
-                existing[b["sid"]] = r["id"]
+            if _primary_sid(json.loads(r["bearers"])):
+                existing[_primary_sid(json.loads(r["bearers"]))] = r["id"]
         if data.get("import_ensemble") and p.get("ensemble"):
             ens = dict(db.get_setting("ensemble"))
             for k, v in p["ensemble"].items():
@@ -1292,7 +1316,7 @@ def import_commit(iid):
                                         "long_description", "website")}
             fields["genres"] = json.dumps(s["genres"][:10])
             fields["bearers"] = json.dumps(_bearers(s["bearers"]))
-            sid = existing.get(s["bearers"][0]["sid"]) if (s["bearers"] and mode == "merge") else None
+            sid = existing.get(_primary_sid(s["bearers"])) if mode == "merge" else None
             if sid:
                 keep = {k: v for k, v in fields.items() if v not in ("", "[]")}
                 keep["updated_at"] = now
@@ -1425,7 +1449,7 @@ def test_template():
     except feed_templates.TemplateError as e:
         raise ApiError(str(e))
     audit("template.test", t["name"], {"url": url})
-    return jsonify(count=len(progs), requests=requests[:14], timezone=str(tz), programmes=[
+    return jsonify(count=len(progs), requests=requests[:14], timezone=t["timezone"] or str(tz), programmes=[
         {"start": p["start"], "end": p["end"], "title": p["title"], "description": p["description"][:200]}
         for p in progs[:60]])
 

@@ -457,3 +457,8 @@ tr.click:hover td { background: var(--card-2); }
 
 .hidden-copy { position: fixed; left: -9999px; top: 0; opacity: 0; }
 details summary { cursor: pointer; }
+
+.bearer-row { display: grid; grid-template-columns: 90px 80px 1fr auto; gap: 10px; align-items: center; }
+.bearer-fields { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 10px; }
+.bearer-fields.fm { grid-template-columns: 1fr 1fr; }
+@media (max-width: 900px) { .bearer-row { grid-template-columns: 1fr 1fr; } .bearer-fields, .bearer-fields.fm { grid-column: 1 / -1; } }
