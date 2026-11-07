@@ -18,6 +18,15 @@ programmes, without running any code from the template:
   time_format  "clock" (HH:MM[:SS] on that day, 24:00 = midnight),
                "datetime" (YYYY-MM-DD HH:MM[:SS] local), "iso" or "unix"
 
+  format       "json" (above), or "text" for a dated text listing: a web
+               page or published document where a line holding a date
+               (7.11.2026) starts each day and "H.MM Title" / "HH:MM Title"
+               lines start programmes; other lines describe the programme
+               before them
+  timezone     IANA zone the times are in (empty = the server's setting)
+  title_split  text listing only: "|"-separated markers; text from the first
+               marker on moves from the title to the description
+
 The station's feed URL is supplied separately, so one template serves any
 number of stations using the same API.
 """
@@ -25,10 +34,17 @@ number of stations using the same API.
 import json
 import re
 from datetime import date, datetime, time, timedelta, timezone
+from html.parser import HTMLParser
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None
 
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 FETCH_MODES = ("per_weekday", "per_date", "once")
+FORMATS = ("json", "text")
 TIME_FORMATS = ("clock", "datetime", "iso", "unix")
 FIELDS = ("title", "description", "start", "end", "duration", "days")
 MAX_ITEMS = 1000
@@ -52,7 +68,7 @@ SAMPLES = [
         "description": "One JSON file for the whole week, keyed by weekday: "
                        "{\"monday\": [{start, end, title, description}, ...], ...}.",
         "example_url": "https://www.coast.fm/canary-islands/data/schedule.json",
-        "fetch": "once", "day_param": "", "day_value": "", "items_path": "{weekday_lower}",
+        "fetch": "once", "timezone": "Atlantic/Canary", "day_param": "", "day_value": "", "items_path": "{weekday_lower}",
         "title": "title", "description_field": "description", "start": "start", "end": "end",
         "duration": "", "days": "", "time_format": "clock",
     },
@@ -62,7 +78,8 @@ SAMPLES = [
                        "Pick the station with station= (ra1, ra2 = Val 202, ra3 ...).",
         "example_url": "https://api.rtvslo.si/pipes/catchup?client_id=82013fb3a531d5414f478747c1aca622"
                        "&day=2026-10-27&station=ra2",
-        "fetch": "per_date", "day_param": "day", "day_value": "{date}", "items_path": "response.items",
+        "fetch": "per_date", "timezone": "Europe/Ljubljana", "day_param": "day", "day_value": "{date}",
+        "items_path": "response.items",
         "title": "title", "description_field": "napovednik", "start": "start_time", "end": "end_time",
         "duration": "duration", "days": "", "time_format": "clock",
     },
@@ -75,6 +92,18 @@ SAMPLES = [
         "fetch": "once", "day_param": "", "day_value": "", "items_path": "{date}",
         "title": "title", "description_field": "shortdesc", "start": "start", "end": "",
         "duration": "duration", "days": "", "time_format": "iso",
+    },
+    {
+        "name": "Järviradio (published Google Doc)",
+        "description": "Text listing: the week's programme as a published Google Doc. A date line "
+                       "(LAUANTAI 07.11.2026) starts each day and \"9.30 Title\" lines start programmes; "
+                       "phone numbers and \"toim.\" credits move to the description.",
+        "example_url": "https://docs.google.com/document/d/e/2PACX-1vStDvnIht6MdcyKTzMipUiDJeZhoj87UlktQMhzpp_F0"
+                       "tEOtzDX6wgkxnsfstncsxPlqfrBrJUczjBP/pub?embedded=true",
+        "format": "text", "fetch": "once", "timezone": "Europe/Helsinki",
+        "title_split": " puh.| puh | toim.|, seurassanne",
+        "day_param": "", "day_value": "", "items_path": "", "title": "", "description_field": "", "start": "",
+        "end": "", "duration": "", "days": "", "time_format": "clock",
     },
 ]
 
@@ -114,9 +143,23 @@ def validate(d):
         "duration": _s(d, "duration", 200),
         "days": _s(d, "days", 200),
         "time_format": _s(d, "time_format", 16, "clock"),
+        "format": _s(d, "format", 8, "json") or "json",
+        "timezone": _s(d, "timezone", 64),
+        "title_split": _s(d, "title_split", 200),
     }
     if not t["name"]:
         raise TemplateError("name is required")
+    if t["format"] not in FORMATS:
+        raise TemplateError("format must be json or text")
+    if t["timezone"]:
+        try:
+            ZoneInfo(t["timezone"])
+        except Exception:
+            raise TemplateError(f"unknown timezone {t['timezone']}")
+    if t["format"] == "text":
+        if t["fetch"] != "once":
+            raise TemplateError("a text listing is fetched with one request")
+        return t
     if t["fetch"] not in FETCH_MODES:
         raise TemplateError("fetch must be one of " + ", ".join(FETCH_MODES))
     if t["time_format"] not in TIME_FORMATS:
@@ -251,7 +294,11 @@ def parse_items(data, t, day: date, tz):
 def run(t, url, days, tz, fetcher, today=None):
     """Fetch and parse `days` days starting today. fetcher(url) -> bytes.
     Returns programmes with ISO start/end, sorted and de-duplicated."""
+    if t.get("timezone"):
+        tz = ZoneInfo(t["timezone"])
     today = today or datetime.now(tz).date()
+    if t.get("format") == "text":
+        return _finish(parse_text_listing(fetcher(url), t, tz, today, days))
     cache = {}
 
     def load(u):
@@ -271,6 +318,11 @@ def run(t, url, days, tz, fetcher, today=None):
         if t["fetch"] == "once" and t["time_format"] != "clock" and not _TOKEN.search(t["items_path"]):
             break  # one list with absolute times covers every day
 
+    return _finish(progs)
+
+
+def _finish(progs):
+    """Sort, de-duplicate and fill in missing end times; ISO strings out."""
     progs.sort(key=lambda p: p["start"])
     out, seen = [], set()
     for i, p in enumerate(progs):
@@ -283,4 +335,87 @@ def run(t, url, days, tz, fetcher, today=None):
             nxt = next((q["start"] for q in progs[i + 1:] if q["start"] > p["start"]), None)
             end = nxt or p["start"] + timedelta(hours=1)
         out.append(dict(p, start=p["start"].isoformat(), end=end.isoformat()))
+    return out
+
+
+# --- dated text listings ------------------------------------------------------------------
+
+_BLOCK_TAGS = {"p", "br", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "table", "ul", "ol"}
+_DATE_LINE = re.compile(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)")
+_PROG_LINE = re.compile(r"^(\d{1,2})[.:](\d{2})\s+(\S.*)$")
+_WEEK_LINE = re.compile(r"^(vk|viikko|vecka|week|wk|kw)\.?\s*\d{1,2}$", re.I)
+
+
+class _TextExtractor(HTMLParser):
+    """Visible text of an HTML document, one line per block element."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self._skip = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style", "head", "title"):
+            self._skip += 1
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "head", "title"):
+            self._skip = max(0, self._skip - 1)
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+
+def text_lines(raw: bytes):
+    text = raw.decode("utf-8-sig", "replace")
+    if re.search(r"<(html|body|p|div|span)\b", text[:20000], re.I):
+        ex = _TextExtractor()
+        ex.feed(text)
+        ex.close()
+        text = "".join(ex.parts)
+    text = text.replace("\u00ad", "").replace("\u200b", "")  # soft hyphens / zero-width spaces
+    return [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+
+
+def parse_text_listing(raw: bytes, t, tz, today: date, days: int):
+    markers = [m for m in t.get("title_split", "").split("|") if m.strip()]
+    last_day = today + timedelta(days=days)
+    out, day, current = [], None, None
+    for line in text_lines(raw)[:20000]:
+        m = _DATE_LINE.search(line)
+        if m and not _PROG_LINE.match(line):
+            try:
+                day = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            except ValueError:
+                day = None
+            current = None
+            continue
+        m = _PROG_LINE.match(line)
+        if m and day is not None:
+            h, mi = int(m.group(1)), int(m.group(2))
+            if h > 24 or mi > 59 or (h == 24 and mi):
+                continue
+            title, desc = m.group(3).strip(), ""
+            for marker in markers:
+                pos = title.find(marker)
+                if pos > 0:
+                    title, desc = title[:pos].strip(" -–,"), title[pos:].strip()
+                    break
+            title = title.rstrip(" ,-–")
+            current = None
+            if today <= day < last_day and title:
+                start = datetime.combine(day, time(0)).replace(tzinfo=tz) + timedelta(hours=h, minutes=mi)
+                current = {"start": start, "end": None, "title": title[:128], "description": desc, "genres": []}
+                out.append(current)
+            if len(out) >= MAX_ITEMS * 4:
+                break
+            continue
+        if current is not None and not _WEEK_LINE.match(line):
+            current["description"] = (current["description"] + " " + line).strip()[:1200]
+    for p in out:
+        p["description"] = p["description"][:1200]
     return out

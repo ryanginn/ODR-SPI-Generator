@@ -1399,7 +1399,7 @@ const FETCH_HELP = {
 };
 const TIME_FORMATS = [["clock", "Clock time on that day (HH:MM or HH:MM:SS, 24:00 = midnight)"], ["datetime", "Local date and time (YYYY-MM-DD HH:MM:SS)"],
   ["iso", "ISO 8601 with offset (2026-10-27T07:00:00+01:00)"], ["unix", "Unix timestamp (seconds)"]];
-const BLANK_TEMPLATE = { name: "", description: "", example_url: "", fetch: "per_weekday", day_param: "day", day_value: "{weekday}",
+const BLANK_TEMPLATE = { name: "", description: "", example_url: "", format: "json", timezone: "", title_split: "", fetch: "per_weekday", day_param: "day", day_value: "{weekday}",
   items_path: "", title: "title", description_field: "description", start: "start", end: "end", duration: "", days: "", time_format: "clock" };
 
 async function pageTemplates(root) {
@@ -1419,7 +1419,7 @@ async function pageTemplates(root) {
       h("tbody", null, tpls.map((t) => h("tr", { class: "click", onclick: () => templateEditor(t) },
         h("td", null, h("div", { class: "row" }, h("b", null, t.name), t.sample ? h("span", { class: "chip accent" }, "Sample") : null),
           h("div", { class: "small muted" }, t.definition.description)),
-        h("td", { class: "nowrap small" }, (FETCH_MODES.find((m) => m[0] === t.definition.fetch) || [, ""])[1]),
+        h("td", { class: "nowrap small" }, t.definition.format === "text" ? "Text listing" : (FETCH_MODES.find((m) => m[0] === t.definition.fetch) || [, ""])[1]),
         h("td", { class: "nowrap" }, t.used_by ? `${t.used_by} station(s)` : h("span", { class: "muted" }, "—")),
         h("td", { class: "nowrap" }, iconBtn("copy", "Copy as JSON", (e) => { e.stopPropagation(); copyText(JSON.stringify(t.definition, null, 2)); }),
           iconBtn("plus", "Duplicate", (e) => { e.stopPropagation(); templateEditor({ definition: { ...t.definition, name: `${t.definition.name} (copy)` } }); })))))))
@@ -1451,12 +1451,26 @@ function templateEditor(t) {
     title: inp(d.title, { class: "mono" }), description_field: inp(d.description_field, { class: "mono" }),
     start: inp(d.start, { class: "mono" }), end: inp(d.end, { class: "mono" }), duration: inp(d.duration, { class: "mono", placeholder: "(optional, seconds)" }),
     days: inp(d.days, { class: "mono", placeholder: "(optional)" }), time_format: sel(d.time_format, TIME_FORMATS),
+    format: sel(d.format, [["json", "JSON API"], ["text", "Text listing (web page or published document)"]]),
+    timezone: inp(d.timezone, { list: "tzlist-tpl", placeholder: "Server setting" }),
+    title_split: inp(d.title_split, { placeholder: " puh.| toim." }),
   };
+  const tzList = h("datalist", { id: "tzlist-tpl" }, (Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : []).map((z) => h("option", { value: z })));
   const collect = () => Object.fromEntries(Object.entries(f).map(([k, el]) => [k, el.value.trim()]));
   const dayBox = h("div", { class: "grid-2" }, field("Day query parameter", f.day_param, { hint: "Set on the URL for each day, or put {day} in the URL instead." }),
     field("Day value", f.day_value, { hint: "{weekday} Monday · {weekday_lower} monday · {weekday_short} Mon · {weekday_num} 1-7 · {date} 2026-10-27 · {yyyymmdd}" }));
-  const syncFetch = () => dayBox.classList.toggle("hidden", f.fetch.value === "once");
-  f.fetch.addEventListener("change", syncFetch); syncFetch();
+  const jsonBox = h("div", { class: "stack" });
+  const textBox = h("div", { class: "stack" },
+    h("div", { class: "small muted" }, "A line containing a date (e.g. LAUANTAI 07.11.2026) starts each day; lines starting with a time (9.30 or 09:30) start programmes; other lines are added to the description of the programme above them. One request covers the whole listing."),
+    field("Move text after these markers to the description", f.title_split, { hint: "Separate markers with |, e.g. \" puh.| toim.\" turns \"Toiveet puh. 0700-...\" into the title \"Toiveet\"." }));
+  const syncFetch = () => {
+    const text = f.format.value === "text";
+    if (text) f.fetch.value = "once";
+    dayBox.classList.toggle("hidden", f.fetch.value === "once");
+    jsonBox.classList.toggle("hidden", text);
+    textBox.classList.toggle("hidden", !text);
+  };
+  f.fetch.addEventListener("change", syncFetch); f.format.addEventListener("change", syncFetch);
 
   const testUrl = inp(d.example_url, { type: "url", placeholder: "URL to test with" });
   const results = h("div", { class: "stack" });
@@ -1481,11 +1495,14 @@ function templateEditor(t) {
     body: h("div", { class: "stack" },
       h("div", { class: "grid-2" }, field("Name", f.name, { max: 64 }), field("Example URL", f.example_url)),
       field("Description", f.description, { max: 500 }),
-      section("Request", field("How to fetch", f.fetch), dayBox),
-      section("Response", h("div", { class: "small muted" }, "Dotted paths into the JSON, e.g. response.items or show.name. Use a|b to try a then b. The items path may contain day tokens, e.g. {weekday_lower}."),
-        h("div", { class: "grid-2" }, field("Items path (list of shows)", f.items_path), field("Time format", f.time_format)),
-        h("div", { class: "grid-3" }, field("Title", f.title), field("Description", f.description_field), field("Weekdays filter", f.days, { hint: "Comma-separated weekday names on each show" })),
-        h("div", { class: "grid-3" }, field("Start", f.start), field("End", f.end), field("Duration", f.duration))),
+      h("div", { class: "grid-2" }, field("Format", f.format), field("Times are in timezone", f.timezone, { hint: "Leave empty to use the server's timezone." })), tzList,
+      textBox,
+      put(jsonBox,
+        section("Request", field("How to fetch", f.fetch), dayBox),
+        section("Response", h("div", { class: "small muted" }, "Dotted paths into the JSON, e.g. response.items or show.name. Use a|b to try a then b. The items path may contain day tokens, e.g. {weekday_lower}."),
+          h("div", { class: "grid-2" }, field("Items path (list of shows)", f.items_path), field("Time format", f.time_format)),
+          h("div", { class: "grid-3" }, field("Title", f.title), field("Description", f.description_field), field("Weekdays filter", f.days, { hint: "Comma-separated weekday names on each show" })),
+          h("div", { class: "grid-3" }, field("Start", f.start), field("End", f.end), field("Duration", f.duration)))),
       section("Test", h("div", { class: "row" }, testUrl, btn("Test", { icon: "play", onclick: runTest })), results)),
     foot: [isNew ? null : btn("Delete", { cls: "danger", icon: "trash", onclick: async () => {
       if (!(await confirmDialog(`Delete the template "${d.name}"?`, { danger: true, okText: "Delete" }))) return;
@@ -1500,6 +1517,7 @@ function templateEditor(t) {
       } catch (e) { /* toasted */ }
     } })],
   });
+  syncFetch();
 }
 
 function fmtLocal(iso) {

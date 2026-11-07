@@ -1425,7 +1425,7 @@ def test_template():
     except feed_templates.TemplateError as e:
         raise ApiError(str(e))
     audit("template.test", t["name"], {"url": url})
-    return jsonify(count=len(progs), requests=requests[:14], timezone=str(tz), programmes=[
+    return jsonify(count=len(progs), requests=requests[:14], timezone=t["timezone"] or str(tz), programmes=[
         {"start": p["start"], "end": p["end"], "title": p["title"], "description": p["description"][:200]}
         for p in progs[:60]])
 
